@@ -23,6 +23,12 @@ local DEFAULTS = {
     borderClassColor = true,   -- tint icon border with healer class colour
     cellSize         = 52,   -- square icon width/height
     cellSpacing      = 4,    -- gap between cells
+    layoutHorizontal = false,  -- false = vertical stack, true = horizontal row
+    showPctSymbol    = true,   -- append % after the mana number
+    showName         = true,   -- show player name label below icon
+    dimOutOfRange    = true,   -- dim icon when healer is out of spell range
+    nameFontSize     = 10,     -- player name label font size
+    pctFontSize      = 14,     -- mana percent font size
     point            = "CENTER",
     relPoint         = "CENTER",
     x                = 150,
@@ -50,18 +56,12 @@ local CLASS_COLOR = {
     EVOKER  = {0.200, 0.580, 0.500},
 }
 
--- Spell IDs whose buff icon replaces the class icon (regen state)
-local REGEN_IDS = {
-    29166,  -- Innervate
-    22734,  -- Drink
-}
 
 -- ============================================================
 -- State
 -- ============================================================
 local cfg          = {}          -- live config (merged from DEFAULTS + saved)
 local healerData   = {}          -- [unitToken] = data table
-local regenNames   = {}          -- [spellName] = iconID  (populated on load)
 local mainFrame                  -- root UI frame
 local configFrame                -- settings panel
 local eventFrame                 -- event listener frame (pre-declared for rebuildRoster)
@@ -86,27 +86,121 @@ local _isSecret  = issecretvalue
 local _wrapStr   = C_StringUtil and C_StringUtil.WrapString
 local _scaleTo100 = CurveConstants and CurveConstants.ScaleTo100
 
+-- Spells that target alive friendly players at ~40y range.
+-- Used with C_Spell.IsSpellInRange (AllowedWhenTainted).
+-- Classes with no such spells (DK, Warrior, Rogue, DH) fall through to
+-- UnitInRange + issecretvalue/SetAlphaFromBoolean (same as ElvUI).
+local RANGE_SPELLS_BY_CLASS = {
+    DRUID       = {8936,   774,    5185  },  -- Regrowth, Rejuvenation, Healing Touch
+    PALADIN     = {19750,  635,    85673 },  -- Flash of Light, Holy Light, Word of Glory
+    PRIEST      = {17,     2061,   21562 },  -- Power Word: Shield, Flash Heal, Prayer of Fortitude
+    SHAMAN      = {8004,   331,    1064  },  -- Healing Surge, Healing Wave, Chain Heal
+    MONK        = {116670, 124682, 115451},  -- Vivify, Enveloping Mist, Renewing Mist
+    EVOKER      = {361469, 355913, 382614},  -- Verdant Embrace, Emerald Blossom, Reversion
+    MAGE        = {1459,   475            },  -- Arcane Intellect, Remove Curse
+    WARLOCK     = {20707,  5697           },  -- Soulstone, Unending Breath
+    HUNTER      = {34477                  },  -- Misdirection
+    -- DEATHKNIGHT: Raise Ally (61999) only targets dead players → nil on alive targets.
+    -- No usable friendly-target spell. Falls through to UnitInRange + SetAlphaFromBoolean.
+    -- WARRIOR, ROGUE, DEMONHUNTER: no friendly-target range spells.
+}
+local rangeCheckSpell   -- set by detectRangeSpell()
+
+-- Racial spells that target alive friendly players — work for any class of that race.
+local RACIAL_RANGE_SPELLS = {
+    28880,  -- Gift of the Naaru (Draenei)
+    59543,  -- Gift of the Naaru (Draenei, alternate ID)
+    69041,  -- Gift of the Naaru (Draenei, higher rank)
+}
+
+-- Use IsPlayerSpell to reliably detect if the player knows a spell.
+-- Check class spells first, then cross-class racial spells as fallback.
+local function detectRangeSpell()
+    rangeCheckSpell = nil
+    local _, class = UnitClass("player")
+    local list = RANGE_SPELLS_BY_CLASS[class]
+    if list then
+        for _, id in ipairs(list) do
+            if IsPlayerSpell(id) then
+                rangeCheckSpell = id
+                return
+            end
+        end
+    end
+    -- Racial fallback: e.g. Draenei DK has Gift of the Naaru (~40y, alive friendly target)
+    for _, id in ipairs(RACIAL_RANGE_SPELLS) do
+        if IsPlayerSpell(id) then
+            rangeCheckSpell = id
+            return
+        end
+    end
+end
+
+-- ── Range detection ───────────────────────────────────────────────────────────
+-- WoW 12.0 introduced "secret values" — opaque booleans returned by UnitInRange()
+-- in instanced/rated content. They cannot be compared in tainted addon code, but
+-- WoW 12.0 added two APIs to handle them safely:
+--   issecretvalue(v)                         — true if v is a secret value
+--   Frame:SetAlphaFromBoolean(v, hi, lo)     — set alpha from a secret bool
+-- This is the same approach ElvUI uses (via oUF:IsSecretValue / SetAlphaFromBoolean).
+
+-- Returns the range status for a unit:
+--   true        — confirmed in range (plain bool)
+--   false       — confirmed out of range (plain bool)
+--   secret bool — instanced content: pass to Frame:SetAlphaFromBoolean
+--   nil         — unknown (treat as in-range to avoid false dimming)
+local function isUnitInRange(unit)
+    -- Priority 1: C_Spell.IsSpellInRange — AllowedWhenTainted, works for classes
+    -- that have a learnable friendly-target spell (healers, mage, warlock, etc.).
+    if rangeCheckSpell then
+        local r = C_Spell.IsSpellInRange(rangeCheckSpell, unit)
+        if r == true  then return true  end
+        if r == false then return false end
+    end
+    -- Priority 2: UnitInRange — the same call ElvUI uses for all classes.
+    -- Outside instances returns plain booleans. Inside instanced/rated content
+    -- the second return (wasChecked) is a secret value; issecretvalue() detects
+    -- this safely without comparing the value. We return the raw secret inRange
+    -- boolean so renderBar can pass it to Frame:SetAlphaFromBoolean, which reads
+    -- secret booleans internally without causing taint errors.
+    local inRange, checked = UnitInRange(unit)
+    if issecretvalue and issecretvalue(checked) then
+        return inRange  -- secret bool — let SetAlphaFromBoolean handle it
+    elseif checked then
+        return inRange and true or false
+    end
+    -- Cannot determine range — return nil so caller doesn't falsely dim.
+    return nil
+end
+
 local function isHealer(unit)
     return UnitExists(unit) and UnitGroupRolesAssigned(unit) == "HEALER"
 end
 
 -- Healer spec IDs — one per class (Priest defaults to Holy; both heal the same)
 local HEALER_SPEC_ID = {
-    DRUID   = 105,   -- Restoration
-    PALADIN = 65,    -- Holy
-    PRIEST  = 257,   -- Holy  (Disc = 256; can't distinguish without full inspect)
-    SHAMAN  = 264,   -- Restoration
-    MONK    = 270,   -- Mistweaver
-    EVOKER  = 1468,  -- Preservation
+    DRUID   = {105},        -- Restoration
+    PALADIN = {65},         -- Holy
+    PRIEST  = {256, 257},   -- Discipline, Holy (both are healer specs)
+    SHAMAN  = {264},        -- Restoration
+    MONK    = {270},        -- Mistweaver
+    EVOKER  = {1468},       -- Preservation
 }
 
 -- classSpecIcon[classToken] = FileDataID, built at load time from WoW's own data
+-- For classes with multiple healer specs (e.g. Priest), uses the first valid icon
+-- as a fallback; GetInspectSpecialization gives the real spec once inspected.
 local classSpecIcon = {}
 local function buildSpecIcons()
     wipe(classSpecIcon)
-    for class, specID in pairs(HEALER_SPEC_ID) do
-        local ok, _, _, _, icon = pcall(GetSpecializationInfoByID, specID)
-        if ok and icon then classSpecIcon[class] = icon end
+    for class, specIDs in pairs(HEALER_SPEC_ID) do
+        for _, specID in ipairs(specIDs) do
+            local ok, _, _, _, icon = pcall(GetSpecializationInfoByID, specID)
+            if ok and icon then
+                classSpecIcon[class] = icon
+                break  -- use first valid spec as class fallback
+            end
+        end
     end
 end
 
@@ -129,38 +223,6 @@ local function getSpecIcon(unit, classToken)
     return classSpecIcon[classToken]  -- fallback: class healer spec icon
 end
 
--- Build the regen-spell-name lookup from spell IDs
-local function buildRegenNames()
-    buildSpecIcons()
-    wipe(regenNames)
-    for _, id in ipairs(REGEN_IDS) do
-        local info = C_Spell.GetSpellInfo(id)
-        if info and info.name then
-            regenNames[info.name] = info.iconID
-        end
-    end
-end
-
--- Return regen buff iconID if the unit has one, or nil.
--- In WoW 12.0 restricted contexts aura.name is a secret value and cannot be used
--- as a table key. We pcall the lookup so the addon doesn't crash; regen detection
--- simply won't fire while values are restricted.
-local function getRegenBuffIcon(unit)
-    local i = 1
-    while true do
-        local aura = C_UnitAuras.GetBuffDataByIndex(unit, i)
-        if not aura then break end
-        local name = aura.name
-        -- Guard: if name is a secret value, using it as a table key crashes even inside pcall
-        if name and not (_isSecret and _isSecret(name)) then
-            local iconID = regenNames[name]
-            if iconID then return iconID end
-        end
-        i = i + 1
-    end
-    return nil
-end
-
 -- Snapshot one unit's current state.
 local function snapshotUnit(unit)
     if not UnitExists(unit) then return nil end
@@ -173,7 +235,6 @@ local function snapshotUnit(unit)
         specIcon  = getSpecIcon(unit, classToken),
         connected = UnitIsConnected(unit),
         dead      = UnitIsDeadOrGhost(unit),
-        regenIcon = getRegenBuffIcon(unit),
     }
 end
 
@@ -204,11 +265,28 @@ local function rebuildRoster()
         end
     end
 
-    -- Re-register UNIT_POWER_FREQUENT for exactly the current healer set.
+    -- Re-register unit events for exactly the current healer set.
     -- RegisterEvent only delivers player events; party/raid units need RegisterUnitEvent.
     eventFrame:UnregisterEvent("UNIT_POWER_FREQUENT")
+    eventFrame:UnregisterEvent("UNIT_IN_RANGE_UPDATE")
     for unit in pairs(healerData) do
         eventFrame:RegisterUnitEvent("UNIT_POWER_FREQUENT", unit)
+        eventFrame:RegisterUnitEvent("UNIT_IN_RANGE_UPDATE", unit)
+    end
+    -- Request spec data for each non-player healer so INSPECT_READY fires and
+    -- getSpecIcon can return the real spec icon instead of the class fallback.
+    -- Stagger 0.5 s apart to avoid throttling on large rosters.
+    local delay = 0.2
+    for unit in pairs(healerData) do
+        if not UnitIsUnit(unit, "player") then
+            local u = unit  -- capture for closure
+            C_Timer.After(delay, function()
+                if UnitExists(u) and healerData[u] then
+                    NotifyInspect(u)
+                end
+            end)
+            delay = delay + 0.5
+        end
     end
 end
 
@@ -254,13 +332,10 @@ end
 
 local function updateUnit(unit)
     if not healerData[unit] then return end
-    local d     = healerData[unit]
+    local d          = healerData[unit]
     d.specIcon  = getSpecIcon(unit, d.class)
     d.connected = UnitIsConnected(unit)
     d.dead      = UnitIsDeadOrGhost(unit)
-    d.regenIcon = getRegenBuffIcon(unit)
-    -- Note: we no longer cache pct as a number (can't, it's a secret value).
-    -- renderBar reads it fresh and feeds it to SetFormattedText.
 end
 
 -- ============================================================
@@ -289,9 +364,10 @@ end
 -- Each healer = square class icon  +  % text centered on it  +  name below
 -- ============================================================
 local function createBar(idx)
-    local cs  = cfg.cellSize
+    local cs      = cfg.cellSize
+    local nameH   = cfg.showName and (NAME_HEIGHT + 2) or 0
     local bar = CreateFrame("Frame", nil, mainFrame)
-    bar:SetSize(cs, cs + NAME_HEIGHT + 2)
+    bar:SetSize(cs, cs + nameH)
 
     -- Dark background behind the icon
     bar.bg = bar:CreateTexture(nil, "BACKGROUND")
@@ -324,19 +400,23 @@ local function createBar(idx)
     bar.border:SetBackdropBorderColor(0.85, 0.85, 0.85, 1)  -- overwritten per-render with class colour
 
     -- % text: anchored by TOPLEFT so there's no ambiguity, positioned at icon centre
-    local fontSize = math.max(math.floor(cs * 0.28), 12)
+    local pctFs = cfg.pctFontSize
     bar.pctTxt = bar:CreateFontString(nil, "OVERLAY")
-    bar.pctTxt:SetFont(STANDARD_TEXT_FONT, fontSize, "THICKOUTLINE")
-    bar.pctTxt:SetPoint("TOPLEFT", bar, "TOPLEFT", 0, -(cs / 2 - fontSize / 2))
+    bar.pctTxt:SetFont(STANDARD_TEXT_FONT, pctFs, "THICKOUTLINE")
+    bar.pctTxt:SetPoint("TOPLEFT", bar, "TOPLEFT", 0, -(cs / 2 - pctFs / 2))
     bar.pctTxt:SetWidth(cs)
     bar.pctTxt:SetJustifyH("CENTER")
 
-    -- Name label directly below the icon
-    bar.nameTxt = bar:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    bar.nameTxt:SetPoint("TOPLEFT", bar.icon, "BOTTOMLEFT", 0, -2)
-    bar.nameTxt:SetWidth(cs)
-    bar.nameTxt:SetJustifyH("CENTER")
-    bar.nameTxt:SetWordWrap(false)
+    -- Name label directly below the icon (only when showName is enabled)
+    if cfg.showName then
+        local nameFs = cfg.nameFontSize
+        bar.nameTxt = bar:CreateFontString(nil, "OVERLAY")
+        bar.nameTxt:SetFont(STANDARD_TEXT_FONT, nameFs, "OUTLINE")
+        bar.nameTxt:SetPoint("TOPLEFT", bar.icon, "BOTTOMLEFT", 0, -2)
+        bar.nameTxt:SetWidth(cs)
+        bar.nameTxt:SetJustifyH("CENTER")
+        bar.nameTxt:SetWordWrap(false)
+    end
 
     barPool[idx] = bar
     return bar
@@ -346,12 +426,25 @@ local function getBar(idx)
     return barPool[idx] or createBar(idx)
 end
 
+-- BORDER_OVERHANG: the icon border frame extends 4px outside the icon on each
+-- side (SetPoint TOPLEFT -4,4 / BOTTOMRIGHT 4,-4).  In horizontal layout the
+-- step must include this 8px total overhang so adjacent borders don't overlap.
+-- Vertical layout naturally absorbs it via nameH (≥16px when name is visible).
+local BORDER_OVERHANG = 8  -- 4px left + 4px right (or top + bottom)
+
 local function positionBar(bar, idx)
     bar:ClearAllPoints()
-    local cs  = cfg.cellSize
-    local gap = cfg.cellSpacing
-    bar:SetPoint("TOPLEFT", mainFrame, "TOPLEFT",
-        0, -(idx - 1) * (cs + NAME_HEIGHT + 2 + gap))
+    local cs    = cfg.cellSize
+    local gap   = cfg.cellSpacing
+    local nameH = cfg.showName and (NAME_HEIGHT + 2) or 0
+    if cfg.layoutHorizontal then
+        -- step = icon width + border overhang + gap: gap=0 means borders touching
+        local step = cs + BORDER_OVERHANG + gap
+        bar:SetPoint("TOPLEFT", mainFrame, "TOPLEFT", (idx - 1) * step, 0)
+    else
+        bar:SetPoint("TOPLEFT", mainFrame, "TOPLEFT",
+            0, -(idx - 1) * (cs + nameH + gap))
+    end
 end
 
 local function getManaColor(pct)
@@ -365,25 +458,48 @@ local function getManaColor(pct)
 end
 
 local function renderBar(bar, data)
-    -- Icon: regen buff icon > spec icon (e.g. Chain Heal for Resto Shaman)
-    local iconID = data.regenIcon or data.specIcon
+    -- Out-of-range: dim the entire bar frame.
+    -- Uses C_Spell.IsSpellInRange (AllowedWhenTainted) so this works even when
+    -- the addon's code path is tainted during combat.
+    if cfg.dimOutOfRange and not UnitIsUnit(data.unit, "player") then
+        local inRange = isUnitInRange(data.unit)
+        if issecretvalue and issecretvalue(inRange) then
+            -- Secret bool from UnitInRange (instanced content) — use the Blizzard
+            -- API that can read secret values without causing taint errors.
+            -- Same approach as ElvUI / oUF SetAlphaFromBoolean.
+            bar:SetAlphaFromBoolean(inRange, 1, 0.35)
+        elseif inRange == false then
+            bar:SetAlpha(0.35)
+        else
+            bar:SetAlpha(1)  -- true or nil (unknown) → full alpha
+        end
+    else
+        bar:SetAlpha(1)
+    end
+
+    local iconID = data.specIcon
     if iconID then
         bar.icon:SetTexture(iconID)
         bar.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)  -- trim default icon border
     end
 
     -- Name text + border
-    bar.nameTxt:SetText(data.name)
     local cc = CLASS_COLOR[data.class]
+    if bar.nameTxt then
+        bar.nameTxt:SetText(data.name)
+        if cc then
+            bar.nameTxt:SetTextColor(cc[1], cc[2], cc[3])
+        else
+            bar.nameTxt:SetTextColor(0.85, 0.85, 0.85)
+        end
+    end
     if cc then
-        bar.nameTxt:SetTextColor(cc[1], cc[2], cc[3])
         if cfg.borderClassColor then
             bar.border:SetBackdropBorderColor(cc[1], cc[2], cc[3], 1)
         else
             bar.border:SetBackdropBorderColor(0.85, 0.85, 0.85, 1)
         end
     else
-        bar.nameTxt:SetTextColor(0.85, 0.85, 0.85)
         bar.border:SetBackdropBorderColor(0.85, 0.85, 0.85, 1)
     end
 
@@ -415,7 +531,7 @@ local function renderBar(bar, data)
 
         if isPlainNumber(pct) then
             local p = math.floor(pct + 0.5)
-            bar.pctTxt:SetText(p .. "%")
+            bar.pctTxt:SetText(cfg.showPctSymbol and (p .. "%") or tostring(p))
             local r, g, b = getManaColor(p)
             bar.tint:SetColorTexture(r, g, b)
             bar.tint:SetAlpha(0.22)
@@ -427,7 +543,7 @@ local function renderBar(bar, data)
             -- route through WrapString + SetFormattedText for display.
             -- %.0f = whole percent — keeps the text short enough to fit in
             -- the 52px icon cell (otherwise "100.0%" overflows).
-            local formatted = format("%.0f%%", pct)
+            local formatted = cfg.showPctSymbol and format("%.0f%%", pct) or format("%.0f", pct)
             bar.pctTxt:SetFormattedText("%s", _wrapStr(formatted, "", ""))
             bar.tint:SetColorTexture(0.45, 0.45, 0.55)  -- neutral tint
             bar.tint:SetAlpha(0.22)
@@ -454,9 +570,18 @@ local function refreshDisplay()
         local count  = #sorted
         local cs     = cfg.cellSize
         local gap    = cfg.cellSpacing
-        local cellH  = cs + NAME_HEIGHT + 2
-        local totalW = cs
-        local totalH = count > 0 and (count * (cellH + gap) - gap) or 1
+        local nameH  = cfg.showName and (NAME_HEIGHT + 2) or 0
+        local cellH  = cs + nameH
+        local totalW, totalH
+        if cfg.layoutHorizontal then
+            -- (count-1) full steps + last icon width (no trailing gap/overhang)
+            local step = cs + BORDER_OVERHANG + gap
+            totalW = count > 0 and ((count - 1) * step + cs) or 1
+            totalH = cellH
+        else
+            totalW = cs
+            totalH = count > 0 and (count * (cellH + gap) - gap) or 1
+        end
 
         mainFrame:SetSize(totalW, totalH)
 
@@ -516,176 +641,473 @@ local function saveKey(key, value)
     HealerManaDB[key] = value
 end
 
-local function makeSlider(parent, labelText, minVal, maxVal, step, yOff, onChange)
-    -- Container holds label + slider + min/max annotations
-    local holder = CreateFrame("Frame", nil, parent)
-    holder:SetSize(240, 48)
-    holder:SetPoint("TOPLEFT", parent, "TOPLEFT", 20, yOff)
-
-    local lbl = holder:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    lbl:SetPoint("TOPLEFT", holder, "TOPLEFT", 0, 0)
-    lbl:SetText(labelText)
-    holder.lbl = lbl
-
-    local sl = CreateFrame("Slider", nil, holder, "BackdropTemplate")
-    sl:SetSize(220, 16)
-    sl:SetPoint("TOPLEFT", holder, "TOPLEFT", 0, -18)
-    sl:SetOrientation("HORIZONTAL")
-    sl:SetThumbTexture("Interface\\Buttons\\UI-SliderBar-Button-Horizontal")
-    sl:SetBackdrop({
-        bgFile   = "Interface\\Buttons\\UI-SliderBar-Background",
-        edgeFile = "Interface\\Buttons\\UI-SliderBar-Border",
-        tile = true, tileSize = 8, edgeSize = 8,
-        insets = { left = 3, right = 3, top = 6, bottom = 6 },
-    })
-    sl:SetMinMaxValues(minVal, maxVal)
-    sl:SetValueStep(step)
-    sl:SetObeyStepOnDrag(true)
-
-    local minLbl = holder:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    minLbl:SetPoint("TOPLEFT", sl, "BOTTOMLEFT", 0, -2)
-    minLbl:SetText(tostring(minVal))
-
-    local maxLbl = holder:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    maxLbl:SetPoint("TOPRIGHT", sl, "BOTTOMRIGHT", 0, -2)
-    maxLbl:SetText(tostring(maxVal))
-
-    sl:SetScript("OnValueChanged", function(self, val)
-        val = math.floor(val / step + 0.5) * step
-        lbl:SetText(labelText .. ": " .. val)
-        onChange(val)
-    end)
-
-    holder.slider = sl
-    return holder
-end
-
 local function createConfigFrame()
-    local f = CreateFrame("Frame", "HealerManaConfig", UIParent, "BackdropTemplate")
-    f:SetSize(280, 395)
+    -- ── Palette ───────────────────────────────────────────────
+    local BG      = {0.06, 0.06, 0.06, 0.98}
+    local TITLE   = {0.08, 0.08, 0.08, 1.00}
+    local GROUP   = {0.09, 0.09, 0.09, 0.85}
+    local BTN     = {0.12, 0.12, 0.12, 1.00}
+    local BTN_HOV = {0.20, 0.20, 0.20, 1.00}
+    local BORDER  = {0.22, 0.22, 0.22}
+    local MUTED   = {0.70, 0.70, 0.70}
+    local PRIMARY = {0.92, 0.91, 0.86}
+    local ACCENT  = {0.78, 0.66, 0.22}
+
+    -- 1-pixel border drawn as four texture lines
+    local function addBorder(frame)
+        local function edge(a, b, horiz)
+            local t = frame:CreateTexture(nil, "BORDER")
+            t:SetPoint(a, frame, a)
+            t:SetPoint(b, frame, b)
+            if horiz then t:SetHeight(1) else t:SetWidth(1) end
+            t:SetColorTexture(BORDER[1], BORDER[2], BORDER[3], 1)
+        end
+        edge("TOPLEFT",    "TOPRIGHT",    true)
+        edge("BOTTOMLEFT", "BOTTOMRIGHT", true)
+        edge("TOPLEFT",    "BOTTOMLEFT",  false)
+        edge("TOPRIGHT",   "BOTTOMRIGHT", false)
+    end
+
+    -- Flat dark button (hover brightens, text lightens)
+    local function flatBtn(parent, text, w, h)
+        local btn = CreateFrame("Button", nil, parent)
+        btn:SetSize(w or 100, h or 24)
+        btn.bg = btn:CreateTexture(nil, "BACKGROUND")
+        btn.bg:SetAllPoints()
+        btn.bg:SetColorTexture(BTN[1], BTN[2], BTN[3], BTN[4])
+        addBorder(btn)
+        btn.lbl = btn:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        btn.lbl:SetPoint("CENTER")
+        btn.lbl:SetText(text or "")
+        btn.lbl:SetTextColor(MUTED[1], MUTED[2], MUTED[3])
+        btn:SetScript("OnEnter", function(self)
+            self.bg:SetColorTexture(BTN_HOV[1], BTN_HOV[2], BTN_HOV[3], BTN_HOV[4])
+            self.lbl:SetTextColor(PRIMARY[1], PRIMARY[2], PRIMARY[3])
+        end)
+        btn:SetScript("OnLeave", function(self)
+            self.bg:SetColorTexture(BTN[1], BTN[2], BTN[3], BTN[4])
+            self.lbl:SetTextColor(MUTED[1], MUTED[2], MUTED[3])
+        end)
+        return btn
+    end
+
+    -- Custom toggle: small box + gold fill check
+    local function makeToggle(parent, labelText, getVal, onToggle)
+        local BOX = 14
+        local tog = CreateFrame("Button", nil, parent)
+        tog:SetHeight(BOX)
+        tog:EnableMouse(true)
+        tog:RegisterForClicks("LeftButtonUp")
+
+        local box = CreateFrame("Frame", nil, tog)
+        box:SetSize(BOX, BOX)
+        box:SetPoint("LEFT", tog, "LEFT", 0, 0)
+        box.bg = box:CreateTexture(nil, "BACKGROUND")
+        box.bg:SetAllPoints()
+        box.bg:SetColorTexture(0.08, 0.08, 0.08, 1)
+        addBorder(box)
+
+        local check = box:CreateTexture(nil, "ARTWORK")
+        check:SetPoint("TOPLEFT",     box, "TOPLEFT",     3, -3)
+        check:SetPoint("BOTTOMRIGHT", box, "BOTTOMRIGHT", -3,  3)
+        check:SetColorTexture(ACCENT[1], ACCENT[2], ACCENT[3], 0.9)
+        check:SetShown(getVal() == true)
+
+        local lbl = tog:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        lbl:SetPoint("LEFT", box, "RIGHT", 6, 0)
+        lbl:SetText(labelText or "")
+        lbl:SetTextColor(MUTED[1], MUTED[2], MUTED[3])
+        tog:SetWidth(BOX + 6 + (lbl:GetStringWidth() or 100) + 8)
+
+        tog._checked = (getVal() == true)
+        function tog:SetChecked(v)
+            self._checked = (v == true)
+            check:SetShown(self._checked)
+        end
+        function tog:GetChecked() return self._checked end
+
+        tog:SetScript("OnClick", function(self)
+            self:SetChecked(not self:GetChecked())
+            onToggle(self:GetChecked())
+        end)
+        return tog
+    end
+
+    -- Custom slider: label + value text + flat fill track + thumb
+    local function makeSlider(parent, labelText, minVal, maxVal, stepVal, onChange)
+        local TRACK_H = 4
+        local s = CreateFrame("Frame", nil, parent)
+        s:SetHeight(36)
+
+        s.lbl = s:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        s.lbl:SetPoint("TOPLEFT", s, "TOPLEFT", 0, 0)
+        s.lbl:SetText(labelText or "")
+        s.lbl:SetTextColor(MUTED[1], MUTED[2], MUTED[3])
+
+        s.valTxt = s:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        s.valTxt:SetPoint("TOPRIGHT", s, "TOPRIGHT", 0, 0)
+        s.valTxt:SetJustifyH("RIGHT")
+        s.valTxt:SetTextColor(ACCENT[1], ACCENT[2], ACCENT[3])
+
+        local track = CreateFrame("Frame", nil, s)
+        track:SetPoint("BOTTOMLEFT",  s, "BOTTOMLEFT",  0, 4)
+        track:SetPoint("BOTTOMRIGHT", s, "BOTTOMRIGHT", 0, 4)
+        track:SetHeight(TRACK_H)
+        track.bg = track:CreateTexture(nil, "BACKGROUND")
+        track.bg:SetAllPoints()
+        track.bg:SetColorTexture(0.18, 0.18, 0.18, 1)
+        addBorder(track)
+
+        local fill = track:CreateTexture(nil, "ARTWORK")
+        fill:SetPoint("LEFT", track, "LEFT", 0, 0)
+        fill:SetHeight(TRACK_H)
+        fill:SetColorTexture(ACCENT[1], ACCENT[2], ACCENT[3], 0.7)
+
+        local thumb = CreateFrame("Frame", nil, track)
+        thumb:SetSize(8, 8)
+        thumb:SetFrameLevel(track:GetFrameLevel() + 1)
+        thumb.bg = thumb:CreateTexture(nil, "ARTWORK")
+        thumb.bg:SetAllPoints()
+        thumb.bg:SetColorTexture(ACCENT[1], ACCENT[2], ACCENT[3], 0.95)
+
+        local hit = CreateFrame("Button", nil, track)
+        hit:SetPoint("TOPLEFT",     track, "TOPLEFT",     -4,  6)
+        hit:SetPoint("BOTTOMRIGHT", track, "BOTTOMRIGHT",  4, -6)
+        hit:EnableMouse(true)
+        hit:RegisterForClicks("LeftButtonDown", "LeftButtonUp")
+
+        s._min = minVal;  s._max = maxVal
+        s._step = stepVal;  s._value = minVal
+
+        local function snap(v)
+            if stepVal and stepVal > 0 then
+                return minVal + math.floor((v - minVal) / stepVal + 0.5) * stepVal
+            end
+            return v
+        end
+        local function redraw()
+            local w = track:GetWidth()
+            if not w or w <= 1 then return end
+            local t = (maxVal > minVal) and ((s._value - minVal) / (maxVal - minVal)) or 0
+            t = math.max(0, math.min(1, t))
+            fill:SetWidth(math.max(w * t, 1))
+            thumb:ClearAllPoints()
+            thumb:SetPoint("CENTER", track, "LEFT", w * t, 0)
+            s.valTxt:SetText(tostring(s._value))
+        end
+        function s:SetValue(v)
+            v = snap(math.max(minVal, math.min(maxVal, tonumber(v) or minVal)))
+            s._value = v; redraw()
+        end
+        function s:GetValue() return s._value end
+
+        local function fromCursor()
+            local x = select(1, GetCursorPosition()) / hit:GetEffectiveScale()
+            local l, r = hit:GetLeft() or 0, hit:GetRight() or 1
+            if r <= l then return minVal end
+            return minVal + math.max(0, math.min(1, (x - l) / (r - l))) * (maxVal - minVal)
+        end
+        local dragging = false
+        hit:SetScript("OnMouseDown", function()
+            dragging = true
+            s:SetValue(snap(fromCursor())); onChange(s._value)
+            s:SetScript("OnUpdate", function()
+                if dragging then
+                    local v = snap(fromCursor())
+                    if v ~= s._value then s:SetValue(v); onChange(s._value) end
+                end
+            end)
+        end)
+        hit:SetScript("OnMouseUp", function()
+            dragging = false; s:SetScript("OnUpdate", nil)
+        end)
+        track:HookScript("OnSizeChanged", redraw)
+        s:SetValue(minVal)
+        return s
+    end
+
+    -- Group box with gold title label
+    local function makeGroup(parent, title)
+        local g = CreateFrame("Frame", nil, parent)
+        g.bg = g:CreateTexture(nil, "BACKGROUND")
+        g.bg:SetAllPoints()
+        g.bg:SetColorTexture(GROUP[1], GROUP[2], GROUP[3], GROUP[4])
+        addBorder(g)
+        if title then
+            g.hdr = g:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+            g.hdr:SetPoint("TOPLEFT", g, "TOPLEFT", 8, -6)
+            g.hdr:SetText(title)
+            g.hdr:SetTextColor(ACCENT[1], ACCENT[2], ACCENT[3])
+        end
+        g.content = CreateFrame("Frame", nil, g)
+        g.content:SetPoint("TOPLEFT",     g, "TOPLEFT",     8, title and -22 or -8)
+        g.content:SetPoint("BOTTOMRIGHT", g, "BOTTOMRIGHT", -8, 8)
+        return g
+    end
+
+    -- ── Main frame ────────────────────────────────────────────
+    local f = CreateFrame("Frame", "HealerManaConfig", UIParent)
+    f:SetSize(300, 520)
     f:SetPoint("CENTER")
-    f:SetFrameStrata("DIALOG")
+    f:SetFrameStrata("HIGH")
     f:SetMovable(true)
     f:SetClampedToScreen(true)
     f:EnableMouse(true)
-    f:RegisterForDrag("LeftButton")
-    f:SetScript("OnDragStart", f.StartMoving)
-    f:SetScript("OnDragStop",  f.StopMovingOrSizing)
-    f:SetBackdrop({
-        bgFile   = "Interface\\DialogFrame\\UI-DialogBox-Background",
-        edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
-        tile = true, tileSize = 32, edgeSize = 32,
-        insets = { left = 11, right = 12, top = 12, bottom = 11 },
-    })
-    f:SetBackdropColor(0, 0, 0, 0.85)
 
-    -- Title
-    local title = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightLarge")
-    title:SetPoint("TOP", f, "TOP", 0, -14)
-    title:SetText("|cff00ccffHealerMana|r Settings")
+    f.bg = f:CreateTexture(nil, "BACKGROUND")
+    f.bg:SetAllPoints()
+    f.bg:SetColorTexture(BG[1], BG[2], BG[3], BG[4])
+    addBorder(f)
 
-    local closeX = CreateFrame("Button", nil, f, "UIPanelCloseButton")
-    closeX:SetPoint("TOPRIGHT", f, "TOPRIGHT", -2, -2)
-    closeX:SetScript("OnClick", function() f:Hide() end)
+    -- Title bar (drag handle)
+    local titleBar = CreateFrame("Frame", nil, f)
+    titleBar:SetPoint("TOPLEFT",  f, "TOPLEFT",  0, 0)
+    titleBar:SetPoint("TOPRIGHT", f, "TOPRIGHT", 0, 0)
+    titleBar:SetHeight(32)
+    titleBar:EnableMouse(true)
+    titleBar:RegisterForDrag("LeftButton")
+    titleBar:SetScript("OnDragStart", function() f:StartMoving() end)
+    titleBar:SetScript("OnDragStop",  function() f:StopMovingOrSizing() end)
+    titleBar.bg = titleBar:CreateTexture(nil, "BACKGROUND")
+    titleBar.bg:SetAllPoints()
+    titleBar.bg:SetColorTexture(TITLE[1], TITLE[2], TITLE[3], TITLE[4])
+    local barDiv = titleBar:CreateTexture(nil, "BORDER")
+    barDiv:SetPoint("BOTTOMLEFT",  titleBar, "BOTTOMLEFT",  0, 0)
+    barDiv:SetPoint("BOTTOMRIGHT", titleBar, "BOTTOMRIGHT", 0, 0)
+    barDiv:SetHeight(1)
+    barDiv:SetColorTexture(BORDER[1], BORDER[2], BORDER[3], 1)
 
-    -- Helper: section header
-    local function sectionLabel(text, yOff)
-        local lbl = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-        lbl:SetPoint("TOPLEFT", f, "TOPLEFT", 16, yOff)
-        lbl:SetText(text)
-        lbl:SetTextColor(1, 0.82, 0)
+    local titleLbl = titleBar:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    titleLbl:SetPoint("LEFT", titleBar, "LEFT", 12, 0)
+    titleLbl:SetText("HealerMana")
+    titleLbl:SetTextColor(PRIMARY[1], PRIMARY[2], PRIMARY[3])
+
+    -- × close button (red on hover)
+    local xBtn = CreateFrame("Button", nil, titleBar, "BackdropTemplate")
+    xBtn:SetSize(24, 24)
+    xBtn:SetPoint("RIGHT", titleBar, "RIGHT", -8, 0)
+    xBtn:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8",
+                       edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1 })
+    xBtn:SetBackdropColor(0.15, 0.15, 0.15, 1)
+    xBtn:SetBackdropBorderColor(BORDER[1], BORDER[2], BORDER[3], 1)
+    xBtn.x = xBtn:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    xBtn.x:SetPoint("CENTER", 0, 0)
+    xBtn.x:SetFont(STANDARD_TEXT_FONT, 18, "")
+    xBtn.x:SetText("×")
+    xBtn.x:SetTextColor(0.8, 0.8, 0.8)
+    xBtn:SetScript("OnEnter", function(self)
+        self:SetBackdropColor(0.5, 0.1, 0.1, 1)
+        self:SetBackdropBorderColor(0.8, 0.2, 0.2, 1)
+        self.x:SetTextColor(1, 1, 1)
+    end)
+    xBtn:SetScript("OnLeave", function(self)
+        self:SetBackdropColor(0.15, 0.15, 0.15, 1)
+        self:SetBackdropBorderColor(BORDER[1], BORDER[2], BORDER[3], 1)
+        self.x:SetTextColor(0.8, 0.8, 0.8)
+    end)
+    xBtn:SetScript("OnClick", function() f:Hide() end)
+
+    -- Footer
+    local footer = CreateFrame("Frame", nil, f)
+    footer:SetPoint("BOTTOMLEFT",  f, "BOTTOMLEFT",  0, 0)
+    footer:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", 0, 0)
+    footer:SetHeight(44)
+    footer.bg = footer:CreateTexture(nil, "BACKGROUND")
+    footer.bg:SetAllPoints()
+    footer.bg:SetColorTexture(TITLE[1], TITLE[2], TITLE[3], TITLE[4])
+    local footDiv = footer:CreateTexture(nil, "BORDER")
+    footDiv:SetPoint("TOPLEFT",  footer, "TOPLEFT",  0, 0)
+    footDiv:SetPoint("TOPRIGHT", footer, "TOPRIGHT", 0, 0)
+    footDiv:SetHeight(1)
+    footDiv:SetColorTexture(BORDER[1], BORDER[2], BORDER[3], 1)
+
+    local resetBtn = flatBtn(footer, "Reset Position", 120, 24)
+    resetBtn:SetPoint("LEFT", footer, "LEFT", 12, 0)
+    resetBtn:SetScript("OnClick", function()
+        mainFrame:ClearAllPoints()
+        mainFrame:SetPoint(DEFAULTS.point, UIParent, DEFAULTS.relPoint, DEFAULTS.x, DEFAULTS.y)
+        cfg.point    = DEFAULTS.point;    HealerManaDB.point    = nil
+        cfg.relPoint = DEFAULTS.relPoint; HealerManaDB.relPoint = nil
+        cfg.x        = DEFAULTS.x;        HealerManaDB.x        = nil
+        cfg.y        = DEFAULTS.y;        HealerManaDB.y        = nil
+        print("|cff00ccffHealerMana|r: position reset.")
+    end)
+
+    local closeFootBtn = flatBtn(footer, "Close", 80, 24)
+    closeFootBtn:SetPoint("RIGHT", footer, "RIGHT", -12, 0)
+    closeFootBtn:SetScript("OnClick", function() f:Hide() end)
+
+    -- Scrollable content area between title bar and footer
+    local scroll = CreateFrame("ScrollFrame", nil, f)
+    scroll:SetPoint("TOPLEFT",     titleBar, "BOTTOMLEFT",  12, -8)
+    scroll:SetPoint("BOTTOMRIGHT", footer,   "TOPRIGHT",   -12,  8)
+    scroll:EnableMouseWheel(true)
+
+    local content = CreateFrame("Frame", nil, scroll)
+    scroll:SetScrollChild(content)
+    content:SetPoint("TOPLEFT")
+    content:SetWidth(1)
+    scroll:HookScript("OnSizeChanged", function(self)
+        content:SetWidth(self:GetWidth())
+    end)
+    scroll:SetScript("OnMouseWheel", function(self, d)
+        local cur = self:GetVerticalScroll()
+        local max = math.max(0, (content:GetHeight() or 0) - self:GetHeight())
+        self:SetVerticalScroll(math.max(0, math.min(max, cur - d * 40)))
+    end)
+
+    -- ── Content layout constants ──────────────────────────────
+    -- innerH formula for a group: 12 + 22*nToggles + 44*nSliders
+    --   12 = top(6) + bottom(6) inner padding
+    --   22 = toggle height(18) + gap(4)
+    --   44 = slider height(36) + gap(8)
+    -- groupH = innerH + 30  (22 header + 8 bottom offset in makeGroup)
+    local GROUP_GAP = 8
+    local contentY  = 0  -- tracks cumulative top-of-next-group
+
+    local function placeGroup(title, nT, nS)
+        local innerH = 12 + nT * 22 + nS * 44
+        local groupH = innerH + 30
+        local g = makeGroup(content, title)
+        g:SetPoint("TOPLEFT",  content, "TOPLEFT",  0, -contentY)
+        g:SetPoint("TOPRIGHT", content, "TOPRIGHT", 0, -contentY)
+        g:SetHeight(groupH)
+        contentY = contentY + groupH + GROUP_GAP
+        return g
     end
 
-    -- Helper: checkbox row
-    local function makeCheckbox(yOff, label, getVal, onToggle)
-        local cb = CreateFrame("CheckButton", nil, f, "UICheckButtonTemplate")
-        cb:SetPoint("TOPLEFT", f, "TOPLEFT", 14, yOff)
-        cb.text:SetText(label)
-        cb:SetChecked(getVal())
-        cb:SetScript("OnClick", function(self) onToggle(self:GetChecked()) end)
-        return cb
-    end
+    -- ── Sort Order ────────────────────────────────────────────
+    local sortG = placeGroup("Sort Order", 2, 0)
+    local iy = -6  -- inner y cursor (relative to group.content TOPLEFT)
 
-    -- ── Sort ──────────────────────────────────────────────────
-    sectionLabel("Sort Order", -46)
+    local cbAlpha = makeToggle(sortG.content, "Alphabetical",
+        function() return cfg.sortAlpha end,
+        function(v) saveKey("sortAlpha", v); refreshDisplay() end)
+    cbAlpha:SetPoint("TOPLEFT", sortG.content, "TOPLEFT", 0, iy); iy = iy - 22
 
-    local cbAlpha = makeCheckbox(-64, "Alphabetical", function() return cfg.sortAlpha end,
-        function(v) saveKey("sortAlpha", v) refreshDisplay() end)
-
-    local cbClass = makeCheckbox(-88, "By healer class", function() return cfg.sortClass end,
-        function(v) saveKey("sortClass", v) refreshDisplay() end)
+    local cbClass = makeToggle(sortG.content, "By healer class",
+        function() return cfg.sortClass end,
+        function(v) saveKey("sortClass", v); refreshDisplay() end)
+    cbClass:SetPoint("TOPLEFT", sortG.content, "TOPLEFT", 0, iy)
 
     -- ── Display ───────────────────────────────────────────────
-    sectionLabel("Display", -118)
+    local dispG = placeGroup("Display", 5, 0)
+    iy = -6
 
-    local cbLock = makeCheckbox(-136, "Lock frame (click-through)",
+    local cbLock = makeToggle(dispG.content, "Lock frame (click-through)",
         function() return cfg.locked end,
-        function(v)
-            saveKey("locked", v)
-            mainFrame:EnableMouse(not cfg.locked)
-        end)
+        function(v) saveKey("locked", v); mainFrame:EnableMouse(not cfg.locked) end)
+    cbLock:SetPoint("TOPLEFT", dispG.content, "TOPLEFT", 0, iy); iy = iy - 22
 
-    local cbBorderColor = makeCheckbox(-160, "Class color border",
+    local cbBorderColor = makeToggle(dispG.content, "Class color border",
         function() return cfg.borderClassColor end,
-        function(v)
-            saveKey("borderClassColor", v)
-            refreshDisplay()
-        end)
+        function(v) saveKey("borderClassColor", v); refreshDisplay() end)
+    cbBorderColor:SetPoint("TOPLEFT", dispG.content, "TOPLEFT", 0, iy); iy = iy - 22
 
-    -- Icon size
-    local sizeHolder = makeSlider(f, "Icon Size: " .. cfg.cellSize,
-        24, 96, 4, -196,
+    local cbPctSymbol = makeToggle(dispG.content, "Show % symbol",
+        function() return cfg.showPctSymbol end,
+        function(v) saveKey("showPctSymbol", v); refreshDisplay() end)
+    cbPctSymbol:SetPoint("TOPLEFT", dispG.content, "TOPLEFT", 0, iy); iy = iy - 22
+
+    local cbShowName = makeToggle(dispG.content, "Show player name",
+        function() return cfg.showName end,
+        function(v)
+            saveKey("showName", v)
+            for _, b in ipairs(barPool) do b:Hide() end
+            wipe(barPool); refreshDisplay()
+        end)
+    cbShowName:SetPoint("TOPLEFT", dispG.content, "TOPLEFT", 0, iy); iy = iy - 22
+
+    local cbDimRange = makeToggle(dispG.content, "Dim when out of range",
+        function() return cfg.dimOutOfRange end,
+        function(v) saveKey("dimOutOfRange", v); refreshDisplay() end)
+    cbDimRange:SetPoint("TOPLEFT", dispG.content, "TOPLEFT", 0, iy)
+
+    -- ── Size ──────────────────────────────────────────────────
+    local sizeG = placeGroup("Size", 0, 2)
+    iy = -6
+
+    local sizeSlider = makeSlider(sizeG.content, "Icon Size", 30, 60, 1,
         function(val)
             if val == cfg.cellSize then return end
             saveKey("cellSize", val)
             for _, b in ipairs(barPool) do b:Hide() end
-            wipe(barPool)
-            refreshDisplay()
+            wipe(barPool); refreshDisplay()
         end)
-    sizeHolder.slider:SetValue(cfg.cellSize)
+    sizeSlider:SetPoint("TOPLEFT",  sizeG.content, "TOPLEFT",  0, iy)
+    sizeSlider:SetPoint("TOPRIGHT", sizeG.content, "TOPRIGHT", 0, iy)
+    sizeSlider:SetValue(cfg.cellSize)
+    iy = iy - 44
 
-    -- Icon spacing
-    local gapHolder = makeSlider(f, "Icon Spacing: " .. cfg.cellSpacing,
-        0, 16, 1, -256,
+    local function gapLabel() return cfg.layoutHorizontal and "Horizontal Spacing" or "Vertical Spacing" end
+    local gapSlider = makeSlider(sizeG.content, gapLabel(), 0, 16, 1,
         function(val)
             if val == cfg.cellSpacing then return end
-            saveKey("cellSpacing", val)
-            refreshDisplay()
+            saveKey("cellSpacing", val); refreshDisplay()
         end)
-    gapHolder.slider:SetValue(cfg.cellSpacing)
+    gapSlider:SetPoint("TOPLEFT",  sizeG.content, "TOPLEFT",  0, iy)
+    gapSlider:SetPoint("TOPRIGHT", sizeG.content, "TOPRIGHT", 0, iy)
+    gapSlider:SetValue(cfg.cellSpacing)
 
-    -- ── Buttons ───────────────────────────────────────────────
-    local resetBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-    resetBtn:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", 14, 14)
-    resetBtn:SetSize(120, 24)
-    resetBtn:SetText("Reset Position")
-    resetBtn:SetScript("OnClick", function()
-        mainFrame:ClearAllPoints()
-        mainFrame:SetPoint(DEFAULTS.point, UIParent, DEFAULTS.relPoint,
-                           DEFAULTS.x, DEFAULTS.y)
-        cfg.point    = DEFAULTS.point;    HealerManaDB.point    = nil
-        cfg.relPoint = DEFAULTS.relPoint; HealerManaDB.relPoint = nil
-        cfg.x        = DEFAULTS.x;       HealerManaDB.x        = nil
-        cfg.y        = DEFAULTS.y;       HealerManaDB.y        = nil
-        print("|cff00ccffHealerMana|r: position reset.")
-    end)
+    -- ── Layout ────────────────────────────────────────────────
+    local layoutG = placeGroup("Layout", 1, 0)
+    iy = -6
 
-    local closeBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-    closeBtn:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -14, 14)
-    closeBtn:SetSize(80, 24)
-    closeBtn:SetText("Close")
-    closeBtn:SetScript("OnClick", function() f:Hide() end)
+    local cbLayout = makeToggle(layoutG.content, "Horizontal (left-to-right)",
+        function() return cfg.layoutHorizontal end,
+        function(v)
+            saveKey("layoutHorizontal", v)
+            gapSlider.lbl:SetText(gapLabel())
+            for _, b in ipairs(barPool) do b:Hide() end
+            wipe(barPool); refreshDisplay()
+        end)
+    cbLayout:SetPoint("TOPLEFT", layoutG.content, "TOPLEFT", 0, iy)
 
-    -- Sync controls to current cfg whenever the panel opens
+    -- ── Font Sizes ────────────────────────────────────────────
+    local fontG = placeGroup("Font Sizes", 0, 2)
+    iy = -6
+
+    local nameFsSlider = makeSlider(fontG.content, "Name Size", 8, 20, 1,
+        function(val)
+            if val == cfg.nameFontSize then return end
+            saveKey("nameFontSize", val)
+            for _, b in ipairs(barPool) do b:Hide() end
+            wipe(barPool); refreshDisplay()
+        end)
+    nameFsSlider:SetPoint("TOPLEFT",  fontG.content, "TOPLEFT",  0, iy)
+    nameFsSlider:SetPoint("TOPRIGHT", fontG.content, "TOPRIGHT", 0, iy)
+    nameFsSlider:SetValue(cfg.nameFontSize)
+    iy = iy - 44
+
+    local pctFsSlider = makeSlider(fontG.content, "Mana % Size", 8, 20, 1,
+        function(val)
+            if val == cfg.pctFontSize then return end
+            saveKey("pctFontSize", val)
+            for _, b in ipairs(barPool) do b:Hide() end
+            wipe(barPool); refreshDisplay()
+        end)
+    pctFsSlider:SetPoint("TOPLEFT",  fontG.content, "TOPLEFT",  0, iy)
+    pctFsSlider:SetPoint("TOPRIGHT", fontG.content, "TOPRIGHT", 0, iy)
+    pctFsSlider:SetValue(cfg.pctFontSize)
+
+    -- Set scroll content height based on total laid-out height
+    content:SetHeight(contentY - GROUP_GAP + 4)
+
+    -- ── OnShow sync ───────────────────────────────────────────
     f:SetScript("OnShow", function()
         cbAlpha:SetChecked(cfg.sortAlpha)
         cbClass:SetChecked(cfg.sortClass)
         cbLock:SetChecked(cfg.locked)
         cbBorderColor:SetChecked(cfg.borderClassColor)
-        sizeHolder.lbl:SetText("Icon Size: " .. cfg.cellSize)
-        sizeHolder.slider:SetValue(cfg.cellSize)
-        gapHolder.lbl:SetText("Icon Spacing: " .. cfg.cellSpacing)
-        gapHolder.slider:SetValue(cfg.cellSpacing)
+        cbPctSymbol:SetChecked(cfg.showPctSymbol)
+        cbShowName:SetChecked(cfg.showName)
+        cbDimRange:SetChecked(cfg.dimOutOfRange)
+        sizeSlider:SetValue(cfg.cellSize)
+        gapSlider.lbl:SetText(gapLabel())
+        gapSlider:SetValue(cfg.cellSpacing)
+        cbLayout:SetChecked(cfg.layoutHorizontal)
+        nameFsSlider:SetValue(cfg.nameFontSize)
+        pctFsSlider:SetValue(cfg.pctFontSize)
     end)
 
     f:Hide()
@@ -703,11 +1125,13 @@ end
 -- ============================================================
 local function printHelp()
     print("|cff00ccffHealerMana|r - type |cffffff00/hm|r to open the settings panel, or:")
-    print("  |cffffff00/hm lock|r   - toggle frame lock/unlock")
-    print("  |cffffff00/hm alpha|r  - toggle alphabetical sort")
-    print("  |cffffff00/hm class|r  - toggle sort by class")
-    print("  |cffffff00/hm reset|r  - reset frame to default position")
-    print("  |cffffff00/hm debug|r  - dump healer roster and mana readings")
+    print("  |cffffff00/hm lock|r    - toggle frame lock/unlock")
+    print("  |cffffff00/hm alpha|r   - toggle alphabetical sort")
+    print("  |cffffff00/hm class|r   - toggle sort by class")
+    print("  |cffffff00/hm layout|r  - toggle horizontal/vertical layout")
+    print("  |cffffff00/hm reset|r   - reset frame to default position")
+    print("  |cffffff00/hm debug|r   - dump healer roster and mana readings")
+    print("  |cffffff00/hm range|r   - diagnose out-of-range detection")
 end
 
 local function printDebug()
@@ -829,8 +1253,52 @@ local function setupSlash()
                   (cfg.sortMana and "|cff00ff00ON|r" or "|cffff4444OFF|r"))
             refreshDisplay()
 
+        elseif cmd == "layout" then
+            cfg.layoutHorizontal = not cfg.layoutHorizontal
+            HealerManaDB.layoutHorizontal = cfg.layoutHorizontal
+            print("|cff00ccffHealerMana|r: layout " ..
+                  (cfg.layoutHorizontal and "|cff00ff00horizontal|r" or "|cff00ff00vertical|r"))
+            for _, b in ipairs(barPool) do b:Hide() end
+            wipe(barPool)
+            refreshDisplay()
+
         elseif cmd == "debug" then
             printDebug()
+
+        elseif cmd == "range" then
+            -- Diagnose range detection
+            local _, class = UnitClass("player")
+            print("|cff00ccffHealerMana|r: range debug ---")
+            print("  player class: " .. tostring(class))
+            print("  rangeCheckSpell: " .. tostring(rangeCheckSpell))
+            if rangeCheckSpell then
+                local info = C_Spell.GetSpellInfo(rangeCheckSpell)
+                print("  spell name: " .. tostring(info and info.name))
+            end
+            print("  dimOutOfRange cfg: " .. tostring(cfg.dimOutOfRange))
+            print("  issecretvalue API: " .. (issecretvalue and "available (WoW 12.0+)" or "NOT available"))
+            print("  issecretvalue API: " .. (issecretvalue and "available" or "NOT available"))
+            local healerCount = 0
+            for _ in pairs(healerData) do healerCount = healerCount + 1 end
+            print("  tracked healers: " .. healerCount .. (healerCount == 0 and " (not in a group?)" or ""))
+            for unit in pairs(healerData) do
+                local spellResult = rangeCheckSpell and C_Spell.IsSpellInRange(rangeCheckSpell, unit)
+                local uirInRange, uirChecked = UnitInRange(unit)
+                local uirStr
+                if issecretvalue and issecretvalue(uirChecked) then
+                    uirStr = "secret(" .. tostring(uirInRange) .. ")"
+                elseif uirChecked then
+                    uirStr = tostring(uirInRange)
+                else
+                    uirStr = "unchecked"
+                end
+                print(string.format("  [%s]  spell=%s  UnitInRange=%s  isUnitInRange=%s",
+                    unit,
+                    tostring(spellResult),
+                    uirStr,
+                    tostring(isUnitInRange(unit))))
+            end
+            print("|cff00ccffHealerMana|r: --- end range debug")
 
         elseif cmd == "help" then
             printHelp()
@@ -862,16 +1330,19 @@ eventFrame = CreateFrame("Frame")
 eventFrame:SetScript("OnEvent", function(self, event, ...)
     -- -------------------------------------------------------
     if event == "ADDON_LOADED" then
-        if (...) ~= ADDON_NAME then return end
+        local addonName = ...
+        if addonName ~= ADDON_NAME then return end
 
         -- Merge saved values over defaults
         HealerManaDB = HealerManaDB or {}
         local db = HealerManaDB
         for k, v in pairs(DEFAULTS) do
-            cfg[k] = (db[k] ~= nil) and db[k] or v
+            -- Must use if/else here: `cond and false or default` evaluates to
+            -- `default` when the saved value is false, discarding the saved off state.
+            if db[k] ~= nil then cfg[k] = db[k] else cfg[k] = v end
         end
 
-        buildRegenNames() buildSpecIcons()
+        buildSpecIcons() detectRangeSpell()
         createMainFrame()
         setupSlash()
         -- Periodic refresh so mana % stays current. renderBar reads pct fresh
@@ -886,7 +1357,7 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
     elseif event == "PLAYER_ENTERING_WORLD" then
         -- Give the roster a moment to settle after a zone change
         C_Timer.After(1.5, function()
-            buildRegenNames() buildSpecIcons()
+            buildSpecIcons() detectRangeSpell()
             rebuildRoster()
             refreshDisplay()
         end)
@@ -903,9 +1374,6 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
     elseif event == "UNIT_POWER_FREQUENT" then
         local unit, powerType = ...
         if powerType == "MANA" and healerData[unit] then
-            -- Triggers a re-render; renderBar reads UnitPowerPercent fresh
-            -- and feeds the secret value through SetFormattedText + WrapString.
-            updateUnit(unit)
             refreshDisplay()
         end
 
@@ -919,13 +1387,17 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         end
 
     -- -------------------------------------------------------
-    elseif event == "UNIT_AURA" then
-        -- Catches Innervate / Drink buff gaining or fading
+    elseif event == "UNIT_IN_RANGE_UPDATE" then
+        -- Engine fires this when a unit crosses the 40-yard threshold.
+        -- isUnitInRange() reads range fresh each call, so just redraw.
         local unit = ...
-        if healerData[unit] then
-            updateUnit(unit)
+        if healerData[unit] and not UnitIsUnit(unit, "player") then
             refreshDisplay()
         end
+
+    -- -------------------------------------------------------
+    elseif event == "PLAYER_REGEN_ENABLED" then
+        refreshDisplay()
 
     elseif event == "INSPECT_READY" then
         -- Spec data is now available for an inspected unit; refresh all icons
@@ -947,9 +1419,9 @@ eventFrame:RegisterEvent("ADDON_LOADED")
 eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 eventFrame:RegisterEvent("GROUP_ROSTER_UPDATE")
 eventFrame:RegisterEvent("ROLE_CHANGED_INFORM")
--- UNIT_POWER_FREQUENT is registered dynamically per-healer in rebuildRoster()
--- using RegisterUnitEvent so it fires for party/raid members, not just the player.
+-- UNIT_POWER_FREQUENT and UNIT_IN_RANGE_UPDATE are registered dynamically per-healer in
+-- rebuildRoster() using RegisterUnitEvent so they fire for party/raid members.
 eventFrame:RegisterEvent("UNIT_FLAGS")
-eventFrame:RegisterEvent("UNIT_AURA")
 eventFrame:RegisterEvent("INSPECT_READY")
 eventFrame:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
+eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")

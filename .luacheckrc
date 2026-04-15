@@ -1,0 +1,70 @@
+std = "lua51"
+
+globals = {
+  "CreateFrame",
+  "UIParent",
+  "GameTooltip",
+  "SlashCmdList",
+  "InterfaceOptionsFrame_OpenToCategory",
+  "ReloadUI",
+  "C_Timer",
+  "C_AddOns",
+  "C_Map",
+  "C_Spell",
+  "C_ClassTalents",
+  "C_TooltipInfo",
+  "C_Container",
+  "C_Item",
+  "C_ItemSocketInfo",
+  "C_QuestLog",
+  "C_GossipInfo",
+  "C_LFGList",
+  "C_ChallengeMode",
+  "C_MythicPlus",
+  "C_PlayerInfo",
+  "C_PaperDollInfo",
+  "C_UI",
+  "Enum",
+  "Settings",
+  "StaticPopup_Show",
+  "PlaySound",
+  "SOUNDKIT",
+  "GetTime",
+  "GetTimePreciseSec",
+  "UnitName",
+  "UnitGUID",
+  "UnitLevel",
+  "UnitClass",
+  "UnitExists",
+  "UnitIsUnit",
+  "InCombatLockdown",
+  "IsAddOnLoaded",
+  "GetAddOnMetadata",
+  "GetLocale",
+  "hooksecurefunc",
+  "print",
+  "type",
+  "pairs",
+  "ipairs",
+  "next",
+  "select",
+  "unpack",
+  "wipe",
+  "tinsert",
+  "tremove",
+  "format",
+  "strlower",
+  "strupper",
+  "strlen",
+  "string",
+  "table",
+  "math"
+}
+
+read_globals = {
+  "bit"
+}
+
+unused_args = false
+redefined = false
+max_line_length = false
