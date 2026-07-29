@@ -21,12 +21,27 @@ local DEFAULTS = {
     sortMana         = false,
     locked           = false,
     borderClassColor = true,   -- tint icon border with healer class colour
+    nameClassColor   = true,   -- tint player name with healer class colour (off = white)
     cellSize         = 52,   -- square icon width/height
     cellSpacing      = 4,    -- gap between cells
     layoutHorizontal = false,  -- false = vertical stack, true = horizontal row
+    gridEnabled      = false,  -- true = wrap into rows+columns, takes priority over layoutHorizontal
+    gridColumns      = 4,      -- columns per row when gridEnabled
+    displayStyle     = "icon", -- "icon" = class icon grid, "bar" = mana bar list
+    barWidth         = 160,    -- bar width in bar display style
+    barHeight        = 20,     -- bar height in bar display style
+    barTexture       = "Blizzard", -- LibSharedMedia statusbar texture name; ignored if LSM unavailable
     showPctSymbol    = true,   -- append % after the mana number
     showName         = true,   -- show player name label below icon
+    nameOverflow     = "shrink", -- "shrink" = auto-shrink font to fit, "truncate" = fixed size + "…"
     dimOutOfRange    = true,   -- dim icon when healer is out of spell range
+    hideSelf             = false, -- exclude the player's own healer entry from the roster
+    showInOpenWorld       = true,
+    showInDungeons        = true,
+    showInRaids           = true,
+    showInScenarios       = true,
+    showInBattlegrounds   = true,
+    showInArenas          = true,
     nameFontSize     = 10,     -- player name label font size
     pctFontSize      = 14,     -- mana percent font size
     point            = "CENTER",
@@ -35,11 +50,63 @@ local DEFAULTS = {
     y                = 0,
 }
 
+-- Derives name/mana% font sizes from the icon size so text scales with the
+-- icon instead of being set independently.
+local function autoFontSizes(cellSize)
+    local nameFs = math.max(8, math.min(20, math.floor(cellSize * 0.19 + 0.5)))
+    local pctFs  = math.max(8, math.min(20, math.floor(cellSize * 0.27 + 0.5)))
+    return nameFs, pctFs
+end
+
 -- ============================================================
 -- Constants
 -- ============================================================
 local NAME_HEIGHT = 14   -- height of the name label below each icon
 local BAR_HEIGHT  = 5    -- thin mana bar below the icon
+local MIN_NAME_FONT = 6  -- floor when shrinking a name label to fit the icon width
+local PCT_RESERVE = 44   -- reserved width for the %/Dead/DC text on the right of a mana bar
+
+-- Shrinks a FontString's font size (down to MIN_NAME_FONT) until its current
+-- text fits maxW. Assumes fs:SetText(...) has already been called.
+local function shrinkTextToFit(fs, baseSize, maxW)
+    local size = baseSize
+    fs:SetFont(STANDARD_TEXT_FONT, size, "OUTLINE")
+    while size > MIN_NAME_FONT and fs:GetStringWidth() > maxW do
+        size = size - 1
+        fs:SetFont(STANDARD_TEXT_FONT, size, "OUTLINE")
+    end
+    return size
+end
+
+-- Derives a single font size for bar-mode name/% text from the bar height.
+local function autoBarFontSize(barHeight)
+    return math.max(8, math.min(20, math.floor(barHeight * 0.55 + 0.5)))
+end
+
+-- Strips one full UTF-8 character off the end of s (never splits a
+-- multi-byte sequence, since WoW's Lua 5.1 has no built-in utf8 library).
+local function stripLastUTF8Char(s)
+    local i = #s
+    if i == 0 then return s end
+    while i > 1 and s:byte(i) >= 0x80 and s:byte(i) < 0xC0 do
+        i = i - 1
+    end
+    return s:sub(1, i - 1)
+end
+
+-- Keeps the font size fixed and truncates text (one full character at a
+-- time, from the end) with a trailing ellipsis until it fits maxW.
+local function truncateTextToFit(fs, text, maxW)
+    fs:SetText(text)
+    if fs:GetStringWidth() <= maxW then return end
+    local truncated = text
+    while #truncated > 0 do
+        truncated = stripLastUTF8Char(truncated)
+        fs:SetText(truncated .. "…")
+        if #truncated == 0 or fs:GetStringWidth() <= maxW then break end
+    end
+    if #truncated == 0 then fs:SetText("…") end
+end
 
 -- Mana bar colours (RGBA 0-1)
 local COL_LOW  = {0.765, 0.118, 0.231}   -- red    < 35 %
@@ -67,6 +134,7 @@ local configFrame                -- settings panel
 local eventFrame                 -- event listener frame (pre-declared for rebuildRoster)
 local barPool      = {}          -- reusable bar frames
 local refreshQueued = false
+local testModeActive = false     -- true while a fake /hm raid roster is active (session-only, not saved)
 
 -- ============================================================
 -- Helpers
@@ -177,6 +245,26 @@ local function isHealer(unit)
     return UnitExists(unit) and UnitGroupRolesAssigned(unit) == "HEALER"
 end
 
+-- Instance-type visibility filter. IsInInstance()'s instanceType is zone
+-- metadata, not combat state, so it's unaffected by WoW 12.0 secret values.
+local function shouldShowForCurrentInstance()
+    local inInstance, instanceType = IsInInstance()
+    if not inInstance then return cfg.showInOpenWorld end
+    if instanceType == "party" then return cfg.showInDungeons end
+    if instanceType == "raid" then return cfg.showInRaids end
+    if instanceType == "scenario" then return cfg.showInScenarios end
+    if instanceType == "pvp" then return cfg.showInBattlegrounds end
+    if instanceType == "arena" then return cfg.showInArenas end
+    return true  -- unrecognized type — default to showing rather than silently hiding
+end
+
+-- Optional soft dependency: returns the LibSharedMedia-3.0 library if some
+-- OTHER installed addon provides it, or nil. HealerMana never embeds/ships it.
+local function getLSM()
+    local LibStub = _G.LibStub
+    return LibStub and LibStub:GetLibrary("LibSharedMedia-3.0", true)
+end
+
 -- Healer spec IDs — one per class (Priest defaults to Holy; both heal the same)
 local HEALER_SPEC_ID = {
     DRUID   = {105},        -- Restoration
@@ -238,22 +326,40 @@ local function snapshotUnit(unit)
     }
 end
 
+-- Fake roster for /hm raid <n> testing outside a real group.
+local TEST_CLASSES = {"DRUID", "PALADIN", "PRIEST", "SHAMAN", "MONK", "EVOKER"}
+local function generateTestRoster(n)
+    wipe(healerData)
+    for i = 1, n do
+        local class = TEST_CLASSES[((i - 1) % #TEST_CLASSES) + 1]
+        healerData["test" .. i] = {
+            unit      = "player",
+            name      = "TestHealer" .. i,
+            class     = class,
+            specIcon  = classSpecIcon[class],
+            connected = true,
+            dead      = (i == n),
+        }
+    end
+end
+
 -- ============================================================
 -- Roster management
 -- ============================================================
 local function rebuildRoster()
+    if testModeActive then return end
     wipe(healerData)
     if IsInRaid() then
         local n = GetNumGroupMembers()
         for i = 1, n do
             local unit = "raid" .. i
-            if isHealer(unit) then
+            if isHealer(unit) and not (cfg.hideSelf and UnitIsUnit(unit, "player")) then
                 healerData[unit] = snapshotUnit(unit)
             end
         end
     elseif IsInGroup() then
         -- Party: "player" + party1..party(n-1)
-        if isHealer("player") then
+        if isHealer("player") and not cfg.hideSelf then
             healerData["player"] = snapshotUnit("player")
         end
         local n = GetNumGroupMembers() - 1   -- excludes self
@@ -269,9 +375,11 @@ local function rebuildRoster()
     -- RegisterEvent only delivers player events; party/raid units need RegisterUnitEvent.
     eventFrame:UnregisterEvent("UNIT_POWER_FREQUENT")
     eventFrame:UnregisterEvent("UNIT_IN_RANGE_UPDATE")
+    eventFrame:UnregisterEvent("UNIT_FLAGS")
     for unit in pairs(healerData) do
         eventFrame:RegisterUnitEvent("UNIT_POWER_FREQUENT", unit)
         eventFrame:RegisterUnitEvent("UNIT_IN_RANGE_UPDATE", unit)
+        eventFrame:RegisterUnitEvent("UNIT_FLAGS", unit)
     end
     -- Request spec data for each non-player healer so INSPECT_READY fires and
     -- getSpecIcon can return the real spec icon instead of the class fallback.
@@ -364,6 +472,53 @@ end
 -- Each healer = square class icon  +  % text centered on it  +  name below
 -- ============================================================
 local function createBar(idx)
+    if cfg.displayStyle == "bar" then
+        local w, h = cfg.barWidth, cfg.barHeight
+        local bar = CreateFrame("Frame", nil, mainFrame)
+        bar:SetSize(w, h)
+
+        bar.bg = bar:CreateTexture(nil, "BACKGROUND")
+        bar.bg:SetAllPoints()
+        bar.bg:SetColorTexture(0.05, 0.05, 0.05, 0.9)
+
+        bar.fill = CreateFrame("StatusBar", nil, bar)
+        bar.fill:SetPoint("TOPLEFT", bar, "TOPLEFT", 1, -1)
+        bar.fill:SetPoint("BOTTOMRIGHT", bar, "BOTTOMRIGHT", -1, 1)
+        local texPath = "Interface\\TargetingFrame\\UI-StatusBar"
+        local LSM = getLSM()
+        if LSM then
+            texPath = LSM:Fetch("statusbar", cfg.barTexture) or texPath
+        end
+        bar.fill:SetStatusBarTexture(texPath)
+        bar.fill:SetMinMaxValues(0, 100)
+        bar.fill:SetValue(100)
+
+        bar.border = CreateFrame("Frame", nil, bar, "BackdropTemplate")
+        bar.border:SetAllPoints()
+        bar.border:SetBackdrop({
+            edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+            edgeSize = 10,
+            insets = { left = 2, right = 2, top = 2, bottom = 2 },
+        })
+        bar.border:SetBackdropBorderColor(0.85, 0.85, 0.85, 1)
+
+        if cfg.showName then
+            bar.nameTxt = bar.fill:CreateFontString(nil, "OVERLAY")
+            bar.nameTxt:SetFont(STANDARD_TEXT_FONT, autoBarFontSize(h), "OUTLINE")
+            bar.nameTxt:SetPoint("LEFT", bar, "LEFT", 4, 0)
+            bar.nameTxt:SetJustifyH("LEFT")
+            bar.nameTxt:SetWordWrap(false)
+        end
+
+        bar.pctTxt = bar.fill:CreateFontString(nil, "OVERLAY")
+        bar.pctTxt:SetFont(STANDARD_TEXT_FONT, autoBarFontSize(h), "OUTLINE")
+        bar.pctTxt:SetPoint("RIGHT", bar, "RIGHT", -4, 0)
+        bar.pctTxt:SetJustifyH("RIGHT")
+
+        barPool[idx] = bar
+        return bar
+    end
+
     local cs      = cfg.cellSize
     local nameH   = cfg.showName and (NAME_HEIGHT + 2) or 0
     local bar = CreateFrame("Frame", nil, mainFrame)
@@ -402,7 +557,7 @@ local function createBar(idx)
     -- % text: anchored by TOPLEFT so there's no ambiguity, positioned at icon centre
     local pctFs = cfg.pctFontSize
     bar.pctTxt = bar:CreateFontString(nil, "OVERLAY")
-    bar.pctTxt:SetFont(STANDARD_TEXT_FONT, pctFs, "THICKOUTLINE")
+    bar.pctTxt:SetFont(STANDARD_TEXT_FONT, pctFs, "OUTLINE")
     bar.pctTxt:SetPoint("TOPLEFT", bar, "TOPLEFT", 0, -(cs / 2 - pctFs / 2))
     bar.pctTxt:SetWidth(cs)
     bar.pctTxt:SetJustifyH("CENTER")
@@ -434,10 +589,32 @@ local BORDER_OVERHANG = 8  -- 4px left + 4px right (or top + bottom)
 
 local function positionBar(bar, idx)
     bar:ClearAllPoints()
+    local gap = cfg.cellSpacing
+    if cfg.displayStyle == "bar" then
+        local w, h = cfg.barWidth, cfg.barHeight
+        if cfg.gridEnabled then
+            local cols = cfg.gridColumns
+            local col  = (idx - 1) % cols
+            local row  = math.floor((idx - 1) / cols)
+            bar:SetPoint("TOPLEFT", mainFrame, "TOPLEFT", col * (w + gap), -row * (h + gap))
+        elseif cfg.layoutHorizontal then
+            bar:SetPoint("TOPLEFT", mainFrame, "TOPLEFT", (idx - 1) * (w + gap), 0)
+        else
+            bar:SetPoint("TOPLEFT", mainFrame, "TOPLEFT", 0, -(idx - 1) * (h + gap))
+        end
+        return
+    end
+
     local cs    = cfg.cellSize
-    local gap   = cfg.cellSpacing
     local nameH = cfg.showName and (NAME_HEIGHT + 2) or 0
-    if cfg.layoutHorizontal then
+    if cfg.gridEnabled then
+        local cols  = cfg.gridColumns
+        local xStep = cs + BORDER_OVERHANG + gap
+        local yStep = cs + nameH + gap
+        local col   = (idx - 1) % cols
+        local row   = math.floor((idx - 1) / cols)
+        bar:SetPoint("TOPLEFT", mainFrame, "TOPLEFT", col * xStep, -row * yStep)
+    elseif cfg.layoutHorizontal then
         -- step = icon width + border overhang + gap: gap=0 means borders touching
         local step = cs + BORDER_OVERHANG + gap
         bar:SetPoint("TOPLEFT", mainFrame, "TOPLEFT", (idx - 1) * step, 0)
@@ -477,6 +654,70 @@ local function renderBar(bar, data)
         bar:SetAlpha(1)
     end
 
+    if cfg.displayStyle == "bar" then
+        if bar.nameTxt then
+            if bar.nameTxt._lastName ~= data.name then
+                local maxW = math.max(bar:GetWidth() - PCT_RESERVE - 8, 10)
+                if cfg.nameOverflow == "truncate" then
+                    bar.nameTxt:SetFont(STANDARD_TEXT_FONT, autoBarFontSize(cfg.barHeight), "OUTLINE")
+                    truncateTextToFit(bar.nameTxt, data.name, maxW)
+                else
+                    bar.nameTxt:SetText(data.name)
+                    shrinkTextToFit(bar.nameTxt, autoBarFontSize(cfg.barHeight), maxW)
+                end
+                bar.nameTxt._lastName = data.name
+            end
+        end
+        local cc = CLASS_COLOR[data.class]
+        if cc and cfg.borderClassColor then
+            bar.border:SetBackdropBorderColor(cc[1], cc[2], cc[3], 1)
+        else
+            bar.border:SetBackdropBorderColor(0.85, 0.85, 0.85, 1)
+        end
+        if data.dead then
+            bar.fill:SetStatusBarColor(0.4, 0.4, 0.4)
+            bar.fill:SetValue(100)
+            bar.pctTxt:SetText("Dead")
+            bar.pctTxt:SetTextColor(0.9, 0.3, 0.3)
+            if bar.nameTxt then bar.nameTxt:SetTextColor(0.6, 0.6, 0.6) end
+        elseif not data.connected then
+            bar.fill:SetStatusBarColor(0.4, 0.4, 0.4)
+            bar.fill:SetValue(100)
+            bar.pctTxt:SetText("DC")
+            bar.pctTxt:SetTextColor(0.6, 0.6, 0.6)
+            if bar.nameTxt then bar.nameTxt:SetTextColor(0.6, 0.6, 0.6) end
+        else
+            if cc then
+                bar.fill:SetStatusBarColor(cc[1], cc[2], cc[3])
+            else
+                bar.fill:SetStatusBarColor(0.3, 0.6, 0.9)
+            end
+            if bar.nameTxt then
+                if cc and cfg.nameClassColor then
+                    bar.nameTxt:SetTextColor(cc[1], cc[2], cc[3])
+                else
+                    bar.nameTxt:SetTextColor(1, 1, 1)
+                end
+            end
+
+            local pct = readUnitPctRaw(data.unit)
+            bar.fill:SetValue(pct or 0)
+
+            if isPlainNumber(pct) then
+                local p = math.floor(pct + 0.5)
+                bar.pctTxt:SetText(cfg.showPctSymbol and (p .. "%") or tostring(p))
+            elseif pct ~= nil and _wrapStr then
+                local formatted = cfg.showPctSymbol and format("%.0f%%", pct) or format("%.0f", pct)
+                bar.pctTxt:SetFormattedText("%s", _wrapStr(formatted, "", ""))
+            else
+                bar.pctTxt:SetText("")
+            end
+            bar.pctTxt:SetTextColor(1, 1, 1)
+        end
+        bar:Show()
+        return
+    end
+
     local iconID = data.specIcon
     if iconID then
         bar.icon:SetTexture(iconID)
@@ -486,11 +727,20 @@ local function renderBar(bar, data)
     -- Name text + border
     local cc = CLASS_COLOR[data.class]
     if bar.nameTxt then
-        bar.nameTxt:SetText(data.name)
-        if cc then
+        if bar.nameTxt._lastName ~= data.name then
+            if cfg.nameOverflow == "truncate" then
+                bar.nameTxt:SetFont(STANDARD_TEXT_FONT, cfg.nameFontSize, "OUTLINE")
+                truncateTextToFit(bar.nameTxt, data.name, bar.nameTxt:GetWidth())
+            else
+                bar.nameTxt:SetText(data.name)
+                shrinkTextToFit(bar.nameTxt, cfg.nameFontSize, bar.nameTxt:GetWidth())
+            end
+            bar.nameTxt._lastName = data.name
+        end
+        if cc and cfg.nameClassColor then
             bar.nameTxt:SetTextColor(cc[1], cc[2], cc[3])
         else
-            bar.nameTxt:SetTextColor(0.85, 0.85, 0.85)
+            bar.nameTxt:SetTextColor(1, 1, 1)
         end
     end
     if cc then
@@ -568,12 +818,49 @@ local function refreshDisplay()
 
         local sorted = getSorted()
         local count  = #sorted
-        local cs     = cfg.cellSize
         local gap    = cfg.cellSpacing
+        local totalW, totalH
+        if cfg.displayStyle == "bar" then
+            local w, h = cfg.barWidth, cfg.barHeight
+            if cfg.gridEnabled then
+                local cols     = cfg.gridColumns
+                local usedCols = count > 0 and math.min(count, cols) or 0
+                local rows     = count > 0 and math.ceil(count / cols) or 0
+                totalW = count > 0 and ((usedCols - 1) * (w + gap) + w) or 1
+                totalH = count > 0 and ((rows - 1) * (h + gap) + h) or 1
+            elseif cfg.layoutHorizontal then
+                totalW = count > 0 and ((count - 1) * (w + gap) + w) or 1
+                totalH = h
+            else
+                totalW = w
+                totalH = count > 0 and (count * (h + gap) - gap) or 1
+            end
+            mainFrame:SetSize(totalW, totalH)
+
+            for i, entry in ipairs(sorted) do
+                local bar = getBar(i)
+                positionBar(bar, i)
+                renderBar(bar, entry.data)
+            end
+            for i = count + 1, #barPool do
+                barPool[i]:Hide()
+            end
+            if count > 0 and shouldShowForCurrentInstance() then mainFrame:Show() else mainFrame:Hide() end
+            return
+        end
+
+        local cs     = cfg.cellSize
         local nameH  = cfg.showName and (NAME_HEIGHT + 2) or 0
         local cellH  = cs + nameH
-        local totalW, totalH
-        if cfg.layoutHorizontal then
+        if cfg.gridEnabled then
+            local cols     = cfg.gridColumns
+            local xStep    = cs + BORDER_OVERHANG + gap
+            local yStep    = cs + nameH + gap
+            local usedCols = count > 0 and math.min(count, cols) or 0
+            local rows     = count > 0 and math.ceil(count / cols) or 0
+            totalW = count > 0 and ((usedCols - 1) * xStep + cs) or 1
+            totalH = count > 0 and ((rows - 1) * yStep + cellH) or 1
+        elseif cfg.layoutHorizontal then
             -- (count-1) full steps + last icon width (no trailing gap/overhang)
             local step = cs + BORDER_OVERHANG + gap
             totalW = count > 0 and ((count - 1) * step + cs) or 1
@@ -596,7 +883,7 @@ local function refreshDisplay()
             barPool[i]:Hide()
         end
 
-        if count > 0 then mainFrame:Show() else mainFrame:Hide() end
+        if count > 0 and shouldShowForCurrentInstance() then mainFrame:Show() else mainFrame:Hide() end
     end)
 end
 
@@ -668,6 +955,14 @@ local function createConfigFrame()
         edge("TOPRIGHT",   "BOTTOMRIGHT", false)
     end
 
+    -- Masks a texture into a circle using Blizzard's stock portrait alpha mask.
+    local function maskCircle(owner, texture)
+        local mask = owner:CreateMaskTexture()
+        mask:SetTexture("Interface\\CHARACTERFRAME\\TempPortraitAlphaMask")
+        mask:SetAllPoints(texture)
+        texture:AddMaskTexture(mask)
+    end
+
     -- Flat dark button (hover brightens, text lightens)
     local function flatBtn(parent, text, w, h)
         local btn = CreateFrame("Button", nil, parent)
@@ -733,11 +1028,11 @@ local function createConfigFrame()
         return tog
     end
 
-    -- Custom slider: label + value text + flat fill track + thumb
+    -- Custom slider: label + value text + flat fill track + circular thumb
     local function makeSlider(parent, labelText, minVal, maxVal, stepVal, onChange)
-        local TRACK_H = 4
+        local TRACK_H = 3
         local s = CreateFrame("Frame", nil, parent)
-        s:SetHeight(36)
+        s:SetHeight(40)
 
         s.lbl = s:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
         s.lbl:SetPoint("TOPLEFT", s, "TOPLEFT", 0, 0)
@@ -750,8 +1045,8 @@ local function createConfigFrame()
         s.valTxt:SetTextColor(ACCENT[1], ACCENT[2], ACCENT[3])
 
         local track = CreateFrame("Frame", nil, s)
-        track:SetPoint("BOTTOMLEFT",  s, "BOTTOMLEFT",  0, 4)
-        track:SetPoint("BOTTOMRIGHT", s, "BOTTOMRIGHT", 0, 4)
+        track:SetPoint("TOPLEFT",  s, "TOPLEFT",  0, -20)
+        track:SetPoint("TOPRIGHT", s, "TOPRIGHT", 0, -20)
         track:SetHeight(TRACK_H)
         track.bg = track:CreateTexture(nil, "BACKGROUND")
         track.bg:SetAllPoints()
@@ -764,15 +1059,23 @@ local function createConfigFrame()
         fill:SetColorTexture(ACCENT[1], ACCENT[2], ACCENT[3], 0.7)
 
         local thumb = CreateFrame("Frame", nil, track)
-        thumb:SetSize(8, 8)
+        thumb:SetSize(14, 14)
         thumb:SetFrameLevel(track:GetFrameLevel() + 1)
+
+        local thumbRing = thumb:CreateTexture(nil, "BACKGROUND")
+        thumbRing:SetAllPoints()
+        thumbRing:SetColorTexture(0, 0, 0, 0.6)
+        maskCircle(thumb, thumbRing)
+
         thumb.bg = thumb:CreateTexture(nil, "ARTWORK")
-        thumb.bg:SetAllPoints()
+        thumb.bg:SetPoint("TOPLEFT", 2, -2)
+        thumb.bg:SetPoint("BOTTOMRIGHT", -2, 2)
         thumb.bg:SetColorTexture(ACCENT[1], ACCENT[2], ACCENT[3], 0.95)
+        maskCircle(thumb, thumb.bg)
 
         local hit = CreateFrame("Button", nil, track)
-        hit:SetPoint("TOPLEFT",     track, "TOPLEFT",     -4,  6)
-        hit:SetPoint("BOTTOMRIGHT", track, "BOTTOMRIGHT",  4, -6)
+        hit:SetPoint("TOPLEFT",     track, "TOPLEFT",     -4,  8)
+        hit:SetPoint("BOTTOMRIGHT", track, "BOTTOMRIGHT",  4, -8)
         hit:EnableMouse(true)
         hit:RegisterForClicks("LeftButtonDown", "LeftButtonUp")
 
@@ -845,9 +1148,83 @@ local function createConfigFrame()
         return g
     end
 
+    -- Custom dropdown: label above a button showing the current selection; click
+    -- opens a floating menu of flatBtn rows (reuses the existing flatBtn widget).
+    local function makeDropdown(parent, labelText, options, getVal, onSelect)
+        local d = CreateFrame("Frame", nil, parent)
+        d:SetHeight(40)
+
+        d.lbl = d:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        d.lbl:SetPoint("TOPLEFT", d, "TOPLEFT", 0, 0)
+        d.lbl:SetText(labelText or "")
+        d.lbl:SetTextColor(MUTED[1], MUTED[2], MUTED[3])
+
+        local btn = CreateFrame("Button", nil, d)
+        btn:SetPoint("BOTTOMLEFT",  d, "BOTTOMLEFT",  0, 0)
+        btn:SetPoint("BOTTOMRIGHT", d, "BOTTOMRIGHT", 0, 0)
+        btn:SetHeight(24)
+        btn.bg = btn:CreateTexture(nil, "BACKGROUND")
+        btn.bg:SetAllPoints()
+        btn.bg:SetColorTexture(0.08, 0.08, 0.08, 1)
+        addBorder(btn)
+        btn.valTxt = btn:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        btn.valTxt:SetPoint("LEFT", btn, "LEFT", 6, 0)
+        btn.valTxt:SetTextColor(PRIMARY[1], PRIMARY[2], PRIMARY[3])
+        local arrow = btn:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        arrow:SetPoint("RIGHT", btn, "RIGHT", -6, 0)
+        arrow:SetText("v")
+        arrow:SetTextColor(MUTED[1], MUTED[2], MUTED[3])
+
+        local ROW_H = 22
+        local menu = CreateFrame("Frame", nil, UIParent)
+        menu:SetFrameStrata("TOOLTIP")
+        menu:Hide()
+        menu.bg = menu:CreateTexture(nil, "BACKGROUND")
+        menu.bg:SetAllPoints()
+        menu.bg:SetColorTexture(0.08, 0.08, 0.08, 1)
+        addBorder(menu)
+        menu:SetPoint("TOPLEFT",  btn, "BOTTOMLEFT",  0, -2)
+        menu:SetPoint("TOPRIGHT", btn, "BOTTOMRIGHT", 0, -2)
+        menu:SetHeight(#options * ROW_H + 8)
+
+        local overlay = CreateFrame("Button", nil, UIParent)
+        overlay:SetAllPoints(UIParent)
+        overlay:SetFrameStrata("TOOLTIP")
+        overlay:Hide()
+        overlay:SetScript("OnClick", function() menu:Hide(); overlay:Hide() end)
+
+        for i, opt in ipairs(options) do
+            local row = flatBtn(menu, opt.label, 100, ROW_H)
+            row:SetFrameStrata("TOOLTIP")
+            row:SetPoint("TOPLEFT",  menu, "TOPLEFT",  4, -4 - (i - 1) * ROW_H)
+            row:SetPoint("TOPRIGHT", menu, "TOPRIGHT", -4, -4 - (i - 1) * ROW_H)
+            row:SetScript("OnClick", function()
+                menu:Hide(); overlay:Hide()
+                d:SetValue(opt.value)
+                onSelect(opt.value)
+            end)
+        end
+
+        btn:SetScript("OnClick", function()
+            if menu:IsShown() then
+                menu:Hide(); overlay:Hide()
+            else
+                menu:Show(); overlay:Show()
+            end
+        end)
+
+        function d:SetValue(v)
+            for _, opt in ipairs(options) do
+                if opt.value == v then btn.valTxt:SetText(opt.label); break end
+            end
+        end
+        d:SetValue(getVal())
+        return d
+    end
+
     -- ── Main frame ────────────────────────────────────────────
     local f = CreateFrame("Frame", "HealerManaConfig", UIParent)
-    f:SetSize(300, 520)
+    f:SetSize(700, 560)
     f:SetPoint("CENTER")
     f:SetFrameStrata("HIGH")
     f:SetMovable(true)
@@ -939,8 +1316,8 @@ local function createConfigFrame()
 
     -- Scrollable content area between title bar and footer
     local scroll = CreateFrame("ScrollFrame", nil, f)
-    scroll:SetPoint("TOPLEFT",     titleBar, "BOTTOMLEFT",  12, -8)
-    scroll:SetPoint("BOTTOMRIGHT", footer,   "TOPRIGHT",   -12,  8)
+    scroll:SetPoint("TOPLEFT",     titleBar, "BOTTOMLEFT",  12, -12)
+    scroll:SetPoint("BOTTOMRIGHT", footer,   "TOPRIGHT",   -12,  12)
     scroll:EnableMouseWheel(true)
 
     local content = CreateFrame("Frame", nil, scroll)
@@ -956,53 +1333,144 @@ local function createConfigFrame()
         self:SetVerticalScroll(math.max(0, math.min(max, cur - d * 40)))
     end)
 
+    -- ── Two fixed-width columns (config frame isn't user-resizable, so
+    -- column widths can just be constants rather than dynamic fractions).
+    -- Content width = frame(700) - scroll's 12px margins each side = 676.
+    -- COLUMN_GAP matches the scroll's own 12px margin so every horizontal
+    -- gutter (left edge -> left column -> gap -> right column -> right
+    -- edge) is the same 12px, and the two columns exactly fill content's
+    -- width (2*332 + 12 = 676) with no unaccounted slack on the right. ──
+    local COLUMN_W   = 332
+    local COLUMN_GAP = 12
+
+    local leftColumn = CreateFrame("Frame", nil, content)
+    leftColumn:SetPoint("TOPLEFT", content, "TOPLEFT", 0, 0)
+    leftColumn:SetSize(COLUMN_W, 600)
+
+    local rightColumn = CreateFrame("Frame", nil, content)
+    rightColumn:SetPoint("TOPLEFT", leftColumn, "TOPRIGHT", COLUMN_GAP, 0)
+    rightColumn:SetSize(COLUMN_W, 600)
+
     -- ── Content layout constants ──────────────────────────────
     -- innerH formula for a group: 12 + 22*nToggles + 44*nSliders
     --   12 = top(6) + bottom(6) inner padding
     --   22 = toggle height(18) + gap(4)
-    --   44 = slider height(36) + gap(8)
+    --   44 = slider height(40) + gap(4)
     -- groupH = innerH + 30  (22 header + 8 bottom offset in makeGroup)
     local GROUP_GAP = 8
-    local contentY  = 0  -- tracks cumulative top-of-next-group
 
-    local function placeGroup(title, nT, nS)
+    local function placeGroup(parent, contentY, title, nT, nS)
         local innerH = 12 + nT * 22 + nS * 44
         local groupH = innerH + 30
-        local g = makeGroup(content, title)
-        g:SetPoint("TOPLEFT",  content, "TOPLEFT",  0, -contentY)
-        g:SetPoint("TOPRIGHT", content, "TOPRIGHT", 0, -contentY)
+        local g = makeGroup(parent, title)
+        g:SetPoint("TOPLEFT",  parent, "TOPLEFT",  0, -contentY)
+        g:SetPoint("TOPRIGHT", parent, "TOPRIGHT", 0, -contentY)
         g:SetHeight(groupH)
-        contentY = contentY + groupH + GROUP_GAP
-        return g
+        return g, contentY + groupH + GROUP_GAP
     end
 
-    -- ── Sort Order ────────────────────────────────────────────
-    local sortG = placeGroup("Sort Order", 2, 0)
+    -- Forward-declared: assigned (without `local`) in the Layout section
+    -- below, but referenced by the Layout Mode dropdown's callback here in
+    -- General, which is built first. Lua upvalues resolve at call time, so
+    -- this works as long as these are assigned before the user can interact.
+    local gapSlider, gapLabel, gridColsSlider, layoutG, barWidthSlider, barHeightSlider, refreshLayoutPanel
+
+    local function currentLayoutMode()
+        if cfg.gridEnabled then return "grid"
+        elseif cfg.layoutHorizontal then return "horizontal"
+        else return "vertical" end
+    end
+
+    -- ── General ───────────────────────────────────────────────
+    local generalG, leftY = placeGroup(leftColumn, 0, "General", 7, 2)
     local iy = -6  -- inner y cursor (relative to group.content TOPLEFT)
 
-    local cbAlpha = makeToggle(sortG.content, "Alphabetical",
-        function() return cfg.sortAlpha end,
-        function(v) saveKey("sortAlpha", v); refreshDisplay() end)
-    cbAlpha:SetPoint("TOPLEFT", sortG.content, "TOPLEFT", 0, iy); iy = iy - 22
+    local displayStyleDropdown = makeDropdown(generalG.content, "Display Style", {
+            {value = "icon", label = "Icons"},
+            {value = "bar",  label = "Bars"},
+        }, function() return cfg.displayStyle end,
+        function(value)
+            saveKey("displayStyle", value)
+            for _, b in ipairs(barPool) do b:Hide() end
+            wipe(barPool); refreshDisplay()
+            refreshLayoutPanel()
+        end)
+    displayStyleDropdown:SetPoint("TOPLEFT",  generalG.content, "TOPLEFT",  0, iy)
+    displayStyleDropdown:SetPoint("TOPRIGHT", generalG.content, "TOPRIGHT", 0, iy)
+    iy = iy - 44
 
-    local cbClass = makeToggle(sortG.content, "By healer class",
-        function() return cfg.sortClass end,
-        function(v) saveKey("sortClass", v); refreshDisplay() end)
-    cbClass:SetPoint("TOPLEFT", sortG.content, "TOPLEFT", 0, iy)
+    local layoutModeDropdown = makeDropdown(generalG.content, "Layout Mode", {
+            {value = "horizontal", label = "Horizontal"},
+            {value = "vertical",   label = "Vertical"},
+            {value = "grid",       label = "Grid"},
+        }, currentLayoutMode,
+        function(value)
+            if value == "grid" then
+                saveKey("gridEnabled", true)
+            else
+                saveKey("gridEnabled", false)
+                saveKey("layoutHorizontal", value == "horizontal")
+            end
+            gapSlider.lbl:SetText(gapLabel())
+            for _, b in ipairs(barPool) do b:Hide() end
+            wipe(barPool); refreshDisplay()
+            refreshLayoutPanel()
+        end)
+    layoutModeDropdown:SetPoint("TOPLEFT",  generalG.content, "TOPLEFT",  0, iy)
+    layoutModeDropdown:SetPoint("TOPRIGHT", generalG.content, "TOPRIGHT", 0, iy)
+    iy = iy - 44 - 8   -- slider-row step + extra breathing room before the checkboxes
 
-    -- ── Display ───────────────────────────────────────────────
-    local dispG = placeGroup("Display", 5, 0)
-    iy = -6
+    local cbShowOpenWorld = makeToggle(generalG.content, "Show in Open World",
+        function() return cfg.showInOpenWorld end,
+        function(v) saveKey("showInOpenWorld", v); refreshDisplay() end)
+    cbShowOpenWorld:SetPoint("TOPLEFT", generalG.content, "TOPLEFT", 0, iy); iy = iy - 22
 
-    local cbLock = makeToggle(dispG.content, "Lock frame (click-through)",
+    local cbShowDungeons = makeToggle(generalG.content, "Show in Dungeons",
+        function() return cfg.showInDungeons end,
+        function(v) saveKey("showInDungeons", v); refreshDisplay() end)
+    cbShowDungeons:SetPoint("TOPLEFT", generalG.content, "TOPLEFT", 0, iy); iy = iy - 22
+
+    local cbShowRaids = makeToggle(generalG.content, "Show in Raids",
+        function() return cfg.showInRaids end,
+        function(v) saveKey("showInRaids", v); refreshDisplay() end)
+    cbShowRaids:SetPoint("TOPLEFT", generalG.content, "TOPLEFT", 0, iy); iy = iy - 22
+
+    local cbShowScenarios = makeToggle(generalG.content, "Show in Scenarios",
+        function() return cfg.showInScenarios end,
+        function(v) saveKey("showInScenarios", v); refreshDisplay() end)
+    cbShowScenarios:SetPoint("TOPLEFT", generalG.content, "TOPLEFT", 0, iy); iy = iy - 22
+
+    local cbShowBattlegrounds = makeToggle(generalG.content, "Show in Battlegrounds",
+        function() return cfg.showInBattlegrounds end,
+        function(v) saveKey("showInBattlegrounds", v); refreshDisplay() end)
+    cbShowBattlegrounds:SetPoint("TOPLEFT", generalG.content, "TOPLEFT", 0, iy); iy = iy - 22
+
+    local cbShowArenas = makeToggle(generalG.content, "Show in Arenas",
+        function() return cfg.showInArenas end,
+        function(v) saveKey("showInArenas", v); refreshDisplay() end)
+    cbShowArenas:SetPoint("TOPLEFT", generalG.content, "TOPLEFT", 0, iy); iy = iy - 22 - 8
+
+    local cbLock = makeToggle(generalG.content, "Lock frame (click-through)",
         function() return cfg.locked end,
         function(v) saveKey("locked", v); mainFrame:EnableMouse(not cfg.locked) end)
-    cbLock:SetPoint("TOPLEFT", dispG.content, "TOPLEFT", 0, iy); iy = iy - 22
+    cbLock:SetPoint("TOPLEFT", generalG.content, "TOPLEFT", 0, iy)
+
+    generalG:SetHeight(generalG:GetHeight() + 8)
+    leftY = leftY + 8
+
+    -- ── Display ───────────────────────────────────────────────
+    local dispG, rightY = placeGroup(rightColumn, 0, "Display", 6, 1)
+    iy = -6
 
     local cbBorderColor = makeToggle(dispG.content, "Class color border",
         function() return cfg.borderClassColor end,
         function(v) saveKey("borderClassColor", v); refreshDisplay() end)
     cbBorderColor:SetPoint("TOPLEFT", dispG.content, "TOPLEFT", 0, iy); iy = iy - 22
+
+    local cbNameColor = makeToggle(dispG.content, "Class color name",
+        function() return cfg.nameClassColor end,
+        function(v) saveKey("nameClassColor", v); refreshDisplay() end)
+    cbNameColor:SetPoint("TOPLEFT", dispG.content, "TOPLEFT", 0, iy); iy = iy - 22
 
     local cbPctSymbol = makeToggle(dispG.content, "Show % symbol",
         function() return cfg.showPctSymbol end,
@@ -1021,77 +1489,155 @@ local function createConfigFrame()
     local cbDimRange = makeToggle(dispG.content, "Dim when out of range",
         function() return cfg.dimOutOfRange end,
         function(v) saveKey("dimOutOfRange", v); refreshDisplay() end)
-    cbDimRange:SetPoint("TOPLEFT", dispG.content, "TOPLEFT", 0, iy)
+    cbDimRange:SetPoint("TOPLEFT", dispG.content, "TOPLEFT", 0, iy); iy = iy - 22
 
-    -- ── Size ──────────────────────────────────────────────────
-    local sizeG = placeGroup("Size", 0, 2)
+    local cbHideSelf = makeToggle(dispG.content, "Hide own bar",
+        function() return cfg.hideSelf end,
+        function(v) saveKey("hideSelf", v); rebuildRoster(); refreshDisplay() end)
+    cbHideSelf:SetPoint("TOPLEFT", dispG.content, "TOPLEFT", 0, iy); iy = iy - 22
+
+    local nameOverflowDropdown = makeDropdown(dispG.content, "Long Name Handling", {
+            {value = "shrink",   label = "Shrink to Fit"},
+            {value = "truncate", label = "Truncate"},
+        }, function() return cfg.nameOverflow end,
+        function(value)
+            saveKey("nameOverflow", value)
+            for _, b in ipairs(barPool) do
+                if b.nameTxt then b.nameTxt._lastName = nil end
+            end
+            refreshDisplay()
+        end)
+    nameOverflowDropdown:SetPoint("TOPLEFT",  dispG.content, "TOPLEFT",  0, iy)
+    nameOverflowDropdown:SetPoint("TOPRIGHT", dispG.content, "TOPRIGHT", 0, iy)
+
+    -- ── Sort Order ────────────────────────────────────────────
+    local sortG
+    sortG, leftY = placeGroup(leftColumn, leftY, "Sort Order", 2, 0)
     iy = -6
 
-    local sizeSlider = makeSlider(sizeG.content, "Icon Size", 30, 60, 1,
+    local cbAlpha = makeToggle(sortG.content, "Alphabetical",
+        function() return cfg.sortAlpha end,
+        function(v) saveKey("sortAlpha", v); refreshDisplay() end)
+    cbAlpha:SetPoint("TOPLEFT", sortG.content, "TOPLEFT", 0, iy); iy = iy - 22
+
+    local cbClass = makeToggle(sortG.content, "By healer class",
+        function() return cfg.sortClass end,
+        function(v) saveKey("sortClass", v); refreshDisplay() end)
+    cbClass:SetPoint("TOPLEFT", sortG.content, "TOPLEFT", 0, iy)
+
+    -- Left column is now fully built and static (General + Sort Order never
+    -- change height) — capture its final height for refreshLayoutPanel below.
+    local leftFinalH = leftY - GROUP_GAP + 4
+
+    -- ── Layout (last in the right column: its height varies with Grid
+    -- mode, so nothing below it needs to reflow when it resizes) ──────
+    local layoutTopY = rightY
+    layoutG = placeGroup(rightColumn, layoutTopY, "Layout", 0, 4)
+
+    -- Initial positions don't matter here — refreshLayoutPanel (called once
+    -- all sliders exist) repositions/shows only the ones relevant to the
+    -- current display style.
+    local sizeSlider = makeSlider(layoutG.content, "Icon Size", 30, 60, 1,
         function(val)
             if val == cfg.cellSize then return end
             saveKey("cellSize", val)
+            local nameFs, pctFs = autoFontSizes(val)
+            saveKey("nameFontSize", nameFs)
+            saveKey("pctFontSize", pctFs)
             for _, b in ipairs(barPool) do b:Hide() end
             wipe(barPool); refreshDisplay()
         end)
-    sizeSlider:SetPoint("TOPLEFT",  sizeG.content, "TOPLEFT",  0, iy)
-    sizeSlider:SetPoint("TOPRIGHT", sizeG.content, "TOPRIGHT", 0, iy)
     sizeSlider:SetValue(cfg.cellSize)
-    iy = iy - 44
 
-    local function gapLabel() return cfg.layoutHorizontal and "Horizontal Spacing" or "Vertical Spacing" end
-    local gapSlider = makeSlider(sizeG.content, gapLabel(), 0, 16, 1,
+    gapLabel = function() return cfg.layoutHorizontal and "Horizontal Spacing" or "Vertical Spacing" end
+    gapSlider = makeSlider(layoutG.content, gapLabel(), 0, 16, 1,
         function(val)
             if val == cfg.cellSpacing then return end
             saveKey("cellSpacing", val); refreshDisplay()
         end)
-    gapSlider:SetPoint("TOPLEFT",  sizeG.content, "TOPLEFT",  0, iy)
-    gapSlider:SetPoint("TOPRIGHT", sizeG.content, "TOPRIGHT", 0, iy)
     gapSlider:SetValue(cfg.cellSpacing)
 
-    -- ── Layout ────────────────────────────────────────────────
-    local layoutG = placeGroup("Layout", 1, 0)
-    iy = -6
-
-    local cbLayout = makeToggle(layoutG.content, "Horizontal (left-to-right)",
-        function() return cfg.layoutHorizontal end,
-        function(v)
-            saveKey("layoutHorizontal", v)
-            gapSlider.lbl:SetText(gapLabel())
-            for _, b in ipairs(barPool) do b:Hide() end
-            wipe(barPool); refreshDisplay()
-        end)
-    cbLayout:SetPoint("TOPLEFT", layoutG.content, "TOPLEFT", 0, iy)
-
-    -- ── Font Sizes ────────────────────────────────────────────
-    local fontG = placeGroup("Font Sizes", 0, 2)
-    iy = -6
-
-    local nameFsSlider = makeSlider(fontG.content, "Name Size", 8, 20, 1,
+    gridColsSlider = makeSlider(layoutG.content, "Grid Columns", 1, 8, 1,
         function(val)
-            if val == cfg.nameFontSize then return end
-            saveKey("nameFontSize", val)
-            for _, b in ipairs(barPool) do b:Hide() end
-            wipe(barPool); refreshDisplay()
+            if val == cfg.gridColumns then return end
+            saveKey("gridColumns", val); refreshDisplay()
         end)
-    nameFsSlider:SetPoint("TOPLEFT",  fontG.content, "TOPLEFT",  0, iy)
-    nameFsSlider:SetPoint("TOPRIGHT", fontG.content, "TOPRIGHT", 0, iy)
-    nameFsSlider:SetValue(cfg.nameFontSize)
-    iy = iy - 44
+    gridColsSlider:SetValue(cfg.gridColumns)
 
-    local pctFsSlider = makeSlider(fontG.content, "Mana % Size", 8, 20, 1,
+    barWidthSlider = makeSlider(layoutG.content, "Bar Width", 80, 260, 5,
         function(val)
-            if val == cfg.pctFontSize then return end
-            saveKey("pctFontSize", val)
+            if val == cfg.barWidth then return end
+            saveKey("barWidth", val)
             for _, b in ipairs(barPool) do b:Hide() end
             wipe(barPool); refreshDisplay()
         end)
-    pctFsSlider:SetPoint("TOPLEFT",  fontG.content, "TOPLEFT",  0, iy)
-    pctFsSlider:SetPoint("TOPRIGHT", fontG.content, "TOPRIGHT", 0, iy)
-    pctFsSlider:SetValue(cfg.pctFontSize)
+    barWidthSlider:SetValue(cfg.barWidth)
 
-    -- Set scroll content height based on total laid-out height
-    content:SetHeight(contentY - GROUP_GAP + 4)
+    barHeightSlider = makeSlider(layoutG.content, "Bar Height", 12, 32, 1,
+        function(val)
+            if val == cfg.barHeight then return end
+            saveKey("barHeight", val)
+            for _, b in ipairs(barPool) do b:Hide() end
+            wipe(barPool); refreshDisplay()
+        end)
+    barHeightSlider:SetValue(cfg.barHeight)
+
+    -- Bar texture picker — only exists if some other installed addon
+    -- provides LibSharedMedia-3.0; HealerMana never embeds/ships it.
+    local barTextureDropdown
+    local layoutLSM = getLSM()
+    if layoutLSM then
+        local options = {}
+        for _, name in ipairs(layoutLSM:List("statusbar")) do
+            options[#options + 1] = {value = name, label = name}
+        end
+        barTextureDropdown = makeDropdown(layoutG.content, "Bar Texture", options,
+            function() return cfg.barTexture end,
+            function(value)
+                saveKey("barTexture", value)
+                for _, b in ipairs(barPool) do b:Hide() end
+                wipe(barPool); refreshDisplay()
+            end)
+        barTextureDropdown:SetValue(cfg.barTexture)
+    end
+
+    -- Shows/repositions only the sliders relevant to the current display
+    -- style (+ grid mode within icon style), hides the rest, and resizes
+    -- the Layout group + shared scroll content to fit.
+    refreshLayoutPanel = function()
+        local isBar = cfg.displayStyle == "bar"
+        local rows = {}
+        if isBar then
+            rows[1] = barWidthSlider
+            rows[2] = barHeightSlider
+            rows[3] = gapSlider
+            if barTextureDropdown then rows[4] = barTextureDropdown end
+        else
+            rows[1] = sizeSlider
+            rows[2] = gapSlider
+            if cfg.gridEnabled then rows[3] = gridColsSlider end
+        end
+
+        local allLayoutWidgets = {sizeSlider, gapSlider, gridColsSlider, barWidthSlider, barHeightSlider}
+        if barTextureDropdown then allLayoutWidgets[#allLayoutWidgets + 1] = barTextureDropdown end
+        for _, s in ipairs(allLayoutWidgets) do
+            s:Hide()
+        end
+
+        local y = -6
+        for _, s in ipairs(rows) do
+            s:ClearAllPoints()
+            s:SetPoint("TOPLEFT",  layoutG.content, "TOPLEFT",  0, y)
+            s:SetPoint("TOPRIGHT", layoutG.content, "TOPRIGHT", 0, y)
+            s:Show()
+            y = y - 44
+        end
+
+        local groupH = 12 + #rows * 44 + 30
+        layoutG:SetHeight(groupH)
+        content:SetHeight(math.max(leftFinalH, layoutTopY + groupH + 4))
+    end
+    refreshLayoutPanel()
 
     -- ── OnShow sync ───────────────────────────────────────────
     f:SetScript("OnShow", function()
@@ -1099,15 +1645,28 @@ local function createConfigFrame()
         cbClass:SetChecked(cfg.sortClass)
         cbLock:SetChecked(cfg.locked)
         cbBorderColor:SetChecked(cfg.borderClassColor)
+        cbNameColor:SetChecked(cfg.nameClassColor)
         cbPctSymbol:SetChecked(cfg.showPctSymbol)
         cbShowName:SetChecked(cfg.showName)
         cbDimRange:SetChecked(cfg.dimOutOfRange)
+        cbHideSelf:SetChecked(cfg.hideSelf)
+        nameOverflowDropdown:SetValue(cfg.nameOverflow)
+        cbShowOpenWorld:SetChecked(cfg.showInOpenWorld)
+        cbShowDungeons:SetChecked(cfg.showInDungeons)
+        cbShowRaids:SetChecked(cfg.showInRaids)
+        cbShowScenarios:SetChecked(cfg.showInScenarios)
+        cbShowBattlegrounds:SetChecked(cfg.showInBattlegrounds)
+        cbShowArenas:SetChecked(cfg.showInArenas)
         sizeSlider:SetValue(cfg.cellSize)
         gapSlider.lbl:SetText(gapLabel())
         gapSlider:SetValue(cfg.cellSpacing)
-        cbLayout:SetChecked(cfg.layoutHorizontal)
-        nameFsSlider:SetValue(cfg.nameFontSize)
-        pctFsSlider:SetValue(cfg.pctFontSize)
+        displayStyleDropdown:SetValue(cfg.displayStyle)
+        layoutModeDropdown:SetValue(currentLayoutMode())
+        gridColsSlider:SetValue(cfg.gridColumns)
+        barWidthSlider:SetValue(cfg.barWidth)
+        barHeightSlider:SetValue(cfg.barHeight)
+        if barTextureDropdown then barTextureDropdown:SetValue(cfg.barTexture) end
+        refreshLayoutPanel()
     end)
 
     f:Hide()
@@ -1132,6 +1691,7 @@ local function printHelp()
     print("  |cffffff00/hm reset|r   - reset frame to default position")
     print("  |cffffff00/hm debug|r   - dump healer roster and mana readings")
     print("  |cffffff00/hm range|r   - diagnose out-of-range detection")
+    print("  |cffffff00/hm raid <n>|r - populate n fake healers to test layout (off to restore)")
 end
 
 local function printDebug()
@@ -1262,6 +1822,27 @@ local function setupSlash()
             wipe(barPool)
             refreshDisplay()
 
+        elseif cmd == "raid" or cmd:match("^raid%s") then
+            local arg = cmd:match("^raid%s+(%S+)$")
+            if not arg or arg == "off" or arg == "0" then
+                testModeActive = false
+                print("|cff00ccffHealerMana|r: test mode OFF, restoring real roster.")
+                rebuildRoster()
+                refreshDisplay()
+            else
+                local n = tonumber(arg)
+                if not n or n < 1 then
+                    print("|cff00ccffHealerMana|r: usage - /hm raid <count> (1-20), or /hm raid off")
+                else
+                    n = math.min(math.floor(n), 20)
+                    testModeActive = true
+                    generateTestRoster(n)
+                    print("|cff00ccffHealerMana|r: test mode ON - " .. n ..
+                          " fake healers (TestHealer" .. n .. " is dead). /hm raid off to restore.")
+                    refreshDisplay()
+                end
+            end
+
         elseif cmd == "debug" then
             printDebug()
 
@@ -1341,6 +1922,8 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
             -- `default` when the saved value is false, discarding the saved off state.
             if db[k] ~= nil then cfg[k] = db[k] else cfg[k] = v end
         end
+        cfg.nameFontSize, cfg.pctFontSize = autoFontSizes(cfg.cellSize)
+        HealerManaDB.nameFontSize, HealerManaDB.pctFontSize = cfg.nameFontSize, cfg.pctFontSize
 
         buildSpecIcons() detectRangeSpell()
         createMainFrame()
@@ -1419,9 +2002,8 @@ eventFrame:RegisterEvent("ADDON_LOADED")
 eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 eventFrame:RegisterEvent("GROUP_ROSTER_UPDATE")
 eventFrame:RegisterEvent("ROLE_CHANGED_INFORM")
--- UNIT_POWER_FREQUENT and UNIT_IN_RANGE_UPDATE are registered dynamically per-healer in
--- rebuildRoster() using RegisterUnitEvent so they fire for party/raid members.
-eventFrame:RegisterEvent("UNIT_FLAGS")
+-- UNIT_POWER_FREQUENT, UNIT_IN_RANGE_UPDATE, and UNIT_FLAGS are registered dynamically
+-- per-healer in rebuildRoster() using RegisterUnitEvent so they fire for party/raid members.
 eventFrame:RegisterEvent("INSPECT_READY")
 eventFrame:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
 eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
