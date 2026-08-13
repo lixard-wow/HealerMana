@@ -4,7 +4,7 @@ You are working on a World of Warcraft addon.
 
 ## Environment
 - Game: World of Warcraft
-- Interface version: 120001
+- Interface version: 120100
 - Expansion/client target: Midnight-era client unless the user explicitly says otherwise
 - Language: Lua
 - Addon type: WoW addon only

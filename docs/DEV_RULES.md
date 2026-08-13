@@ -2,7 +2,7 @@
 
 ## Project Baseline
 - WoW addon project
-- Interface version: 120001
+- Interface version: 120100
 - Lua only
 - No external libraries unless explicitly approved
 - Prefer custom UI over Blizzard templates/assets

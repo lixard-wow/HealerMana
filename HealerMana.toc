@@ -1,8 +1,17 @@
-## Interface: 120001
+## Interface: 120100, 120007
 ## Title: HealerMana
 ## Notes: Monitors healer mana in raids and dungeons. Type /hm for options.
 ## Author: Lixard
 ## Version: 1.0.0
 ## SavedVariables: HealerManaDB
 
+Libs\LibStub\LibStub.lua
+Libs\LibDataBroker-1.1\LibDataBroker-1.1.lua
+Libs\LibDBIcon-1.0\LibDBIcon-1.0.lua
+
 HealerMana.lua
+Core.lua
+UI.lua
+Config.lua
+Commands.lua
+Minimap.lua
