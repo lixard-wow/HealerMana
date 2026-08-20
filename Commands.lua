@@ -18,6 +18,8 @@ local function printHelp()
     print("  |cffffff00/hm debug|r   - dump healer roster and mana readings")
     print("  |cffffff00/hm range|r   - diagnose out-of-range detection")
     print("  |cffffff00/hm raid <n>|r - populate n fake healers to test layout (off to restore)")
+    print("  |cffffff00/hm regendebug|r - TEMP: dump Innervate/Food&Drink detection for tracked units")
+    print("  |cffffff00/hm raidregen|r  - TEMP: preview the Innervate/Food&Drink icon swap on fake healers")
 end
 
 local function printDebug()
@@ -92,6 +94,48 @@ local function printDebug()
     print("|cff00ccffHealerMana DEBUG|r ---- end")
 end
 
+local function printRegenDebug()
+    print("|cff00ccffHealerMana|r: regen debug (TEMP command, remove after verifying) ---")
+    local checked = 0
+    local function reportUnit(unit)
+        checked = checked + 1
+        local ok1, innervate = pcall(C_UnitAuras.GetUnitAuraBySpellID, unit, HM.INNERVATE_SPELL_ID)
+        local nameResults = {}
+        for _, name in ipairs(HM.FOOD_DRINK_NAMES) do
+            local ok, aura = pcall(C_UnitAuras.GetAuraDataBySpellName, unit, name, "HELPFUL")
+            nameResults[#nameResults + 1] = string.format("%s(ok=%s,type=%s)", name, tostring(ok), tostring(type(aura)))
+        end
+        local storedRegen = healerData[unit] and healerData[unit].regenState
+        local storedDead  = healerData[unit] and healerData[unit].dead
+        print(string.format(
+            "  [%s] %s  innervateOk=%s type=%s  %s  liveRegenState=%s  storedRegenState=%s  liveDead=%s  storedDead=%s",
+            unit, tostring(UnitName(unit)),
+            tostring(ok1), tostring(type(innervate)),
+            table.concat(nameResults, " "),
+            tostring(HM.getRegenState(unit)),
+            tostring(storedRegen),
+            tostring(UnitIsDeadOrGhost(unit)),
+            tostring(storedDead)))
+    end
+    for unit in pairs(healerData) do reportUnit(unit) end
+    if checked == 0 then
+        print("  (no tracked healers - scanning group units instead)")
+        if IsInRaid() then
+            for i = 1, GetNumGroupMembers() do
+                local u = "raid" .. i
+                if UnitExists(u) then reportUnit(u) end
+            end
+        elseif IsInGroup() then
+            for _, u in ipairs({"player", "party1", "party2", "party3", "party4"}) do
+                if UnitExists(u) then reportUnit(u) end
+            end
+        elseif UnitExists("player") then
+            reportUnit("player")
+        end
+    end
+    print("|cff00ccffHealerMana|r: --- end regen debug")
+end
+
 function HM.setupSlash()
     SLASH_HEALERMANA1 = "/healermana"
     SLASH_HEALERMANA2 = "/hm"
@@ -149,6 +193,18 @@ function HM.setupSlash()
 
         elseif cmd == "debug" then
             printDebug()
+
+        elseif cmd == "regendebug" then
+            printRegenDebug()
+
+        elseif cmd == "raidregen" then
+            HM.testModeActive = true
+            HM.generateTestRoster(3)
+            if healerData["test1"] then healerData["test1"].regenState = "innervate" end
+            if healerData["test2"] then healerData["test2"].regenState = "drinking" end
+            print("|cff00ccffHealerMana|r: regen preview ON (TEMP command) - " ..
+                  "test1=Innervate icon, test2=Food & Drink icon, test3=normal. /hm raid off to restore.")
+            HM.refreshDisplay()
 
         elseif cmd == "range" then
             local _, class = UnitClass("player")

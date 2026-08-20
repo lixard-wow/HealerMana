@@ -19,7 +19,7 @@
   - HealerMana.lua: bootstrap — DEFAULTS, shared HM state (cfg, healerData, barPool, eventFrame), ADDON_LOADED/event dispatch
   - Core.lua: roster management (rebuildRoster, snapshotUnit, updateUnit), mana reading (readUnitPctRaw), range detection (isUnitInRange, detectRangeSpell), spec icons (buildSpecIcons, getSpecIcon), saveKey/resetPosition
   - UI.lua: bar pool (createBar, getBar, positionBar, renderBar), display refresh (refreshDisplay), main frame (createMainFrame)
-  - Config.lua: widget helpers (makeToggle, makeSlider, makeDropdown, makeColorSwatch, makeTabButton, flatBtn), left-tab/right-content settings panel (createConfigFrame, openConfig)
+  - Config.lua: widget helpers (makeToggle, makeSlider, makeDropdown, makeColorSwatch, makeTabButton, flatBtn), left-tab/right-content settings panel (createConfigFrame, openConfig) with 7 tabs (General, Layout, Fill Color, Background & Border, Text, Sort & Visibility, Help — the last is static reference text, no controls)
   - Commands.lua: slash commands (setupSlash), debug dumps (printDebug, printHelp)
   - Minimap.lua: LibDataBroker launcher object + LibDBIcon registration (initMinimapIcon, setMinimapIconShown); left-click opens settings, right-click toggles the test-roster preview directly (no menu)
   - Libs/: embedded LibStub, LibDataBroker-1.1, LibDBIcon-1.0 (third-party, not linted/edited)

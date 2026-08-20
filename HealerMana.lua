@@ -57,6 +57,8 @@ HM.rangeCheckSpell = nil
 
 HM.eventFrame = CreateFrame("Frame")
 
+local rosterUpdateQueued = false
+
 HM.eventFrame:SetScript("OnEvent", function(self, event, ...)
     if event == "ADDON_LOADED" then
         local addonName = ...
@@ -87,7 +89,10 @@ HM.eventFrame:SetScript("OnEvent", function(self, event, ...)
         end)
 
     elseif event == "GROUP_ROSTER_UPDATE" or event == "ROLE_CHANGED_INFORM" then
+        if rosterUpdateQueued then return end
+        rosterUpdateQueued = true
         C_Timer.After(0.5, function()
+            rosterUpdateQueued = false
             HM.rebuildRoster()
             HM.refreshDisplay()
         end)
@@ -98,7 +103,7 @@ HM.eventFrame:SetScript("OnEvent", function(self, event, ...)
             HM.refreshDisplay()
         end
 
-    elseif event == "UNIT_FLAGS" then
+    elseif event == "UNIT_FLAGS" or event == "UNIT_HEALTH" or event == "UNIT_MAXHEALTH" or event == "UNIT_AURA" then
         local unit = ...
         if HM.healerData[unit] then
             HM.updateUnit(unit)

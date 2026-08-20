@@ -259,7 +259,7 @@ local function renderBar(bar, data)
         elseif not data.connected then
             bar.fill:SetStatusBarColor(0.4, 0.4, 0.4, cfg.barFillOpacity)
             bar.fill:SetValue(100)
-            bar.pctTxt:SetText("DC")
+            bar.pctTxt:SetText("Offline")
             bar.pctTxt:SetTextColor(0.6, 0.6, 0.6)
             if bar.nameTxt then bar.nameTxt:SetTextColor(0.6, 0.6, 0.6) end
         else
@@ -298,6 +298,11 @@ local function renderBar(bar, data)
     end
 
     local iconID = data.specIcon
+    if data.regenState == "innervate" then
+        iconID = HM.innervateIcon or iconID
+    elseif data.regenState == "drinking" then
+        iconID = HM.foodDrinkIcon or iconID
+    end
     if iconID then
         bar.icon:SetTexture(iconID)
         bar.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
@@ -336,7 +341,7 @@ local function renderBar(bar, data)
         bar.tint:SetColorTexture(0.4, 0.4, 0.4)
         bar.tint:SetAlpha(cfg.iconTintOpacity)
     elseif not data.connected then
-        bar.pctTxt:SetText("DC")
+        bar.pctTxt:SetText("Offline")
         bar.pctTxt:SetTextColor(0.6, 0.6, 0.6)
         bar.icon:SetAlpha(0.4)
         bar.tint:SetColorTexture(0.4, 0.4, 0.4)
@@ -351,7 +356,7 @@ local function renderBar(bar, data)
         end
 
         local pct = data.testPct or HM.readUnitPctRaw(data.unit)
-        local fr, fg, fb = getFillColor(data, pct)
+        local fr, fg, fb = getFillColor(data)
 
         if HM.isPlainNumber(pct) then
             local p = math.floor(pct + 0.5)

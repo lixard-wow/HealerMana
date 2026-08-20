@@ -9,6 +9,39 @@ local MANA = 0
 local _isSecret   = issecretvalue
 local _scaleTo100 = CurveConstants and CurveConstants.ScaleTo100
 
+HM.INNERVATE_SPELL_ID = 29166
+HM.FOOD_DRINK_NAMES   = {"Refreshment", "Drink", "Mana Lily Tea", "Argentleaf Tea"}
+
+HM.innervateIcon = C_Spell.GetSpellTexture(HM.INNERVATE_SPELL_ID)
+HM.foodDrinkIcon = nil
+
+local function auraDataBySpellID(unit, spellID)
+    local ok, aura = pcall(C_UnitAuras.GetUnitAuraBySpellID, unit, spellID)
+    if ok and type(aura) == "table" then return aura end
+    return nil
+end
+
+local function auraDataByName(unit, name)
+    local ok, aura = pcall(C_UnitAuras.GetAuraDataBySpellName, unit, name, "HELPFUL")
+    if ok and type(aura) == "table" then return aura end
+    return nil
+end
+
+function HM.getRegenState(unit)
+    if not UnitExists(unit) then return nil end
+    if auraDataBySpellID(unit, HM.INNERVATE_SPELL_ID) then return "innervate" end
+    for _, name in ipairs(HM.FOOD_DRINK_NAMES) do
+        local aura = auraDataByName(unit, name)
+        if aura then
+            if not HM.foodDrinkIcon and type(aura.icon) == "number" then
+                HM.foodDrinkIcon = aura.icon
+            end
+            return "drinking"
+        end
+    end
+    return nil
+end
+
 local RANGE_SPELLS_BY_CLASS = {
     DRUID       = {8936,   774,    5185  },
     PALADIN     = {19750,  635,    85673 },
@@ -62,6 +95,8 @@ function HM.isUnitInRange(unit)
     return nil
 end
 
+local resolvedRoleByName = {}
+
 local function resolveUnitRole(unit)
     local role = UnitGroupRolesAssigned(unit)
     if role == "HEALER" or role == "TANK" or role == "DAMAGER" then
@@ -73,10 +108,17 @@ local function resolveUnitRole(unit)
         local ok, _, _, _, _, specRole = pcall(GetSpecializationInfo, specIdx)
         return ok and specRole or nil
     end
+    local name = UnitName(unit)
+    if name and resolvedRoleByName[name] then
+        return resolvedRoleByName[name]
+    end
     local ok, specID = pcall(GetInspectSpecialization, unit)
     if ok and type(specID) == "number" and specID > 0 then
         local ok2, _, _, _, _, specRole = pcall(GetSpecializationInfoByID, specID)
-        return ok2 and specRole or nil
+        if ok2 and specRole then
+            if name then resolvedRoleByName[name] = specRole end
+            return specRole
+        end
     end
     return nil
 end
@@ -177,12 +219,13 @@ local function snapshotUnit(unit)
     local name          = UnitName(unit)
     local _, classToken = UnitClass(unit)
     return {
-        unit      = unit,
-        name      = name or "?",
-        class     = classToken or "",
-        specIcon  = HM.getSpecIcon(unit, classToken),
-        connected = UnitIsConnected(unit),
-        dead      = UnitIsDeadOrGhost(unit),
+        unit       = unit,
+        name       = name or "?",
+        class      = classToken or "",
+        specIcon   = HM.getSpecIcon(unit, classToken),
+        connected  = UnitIsConnected(unit),
+        dead       = UnitIsDeadOrGhost(unit),
+        regenState = HM.getRegenState(unit),
     }
 end
 
@@ -234,10 +277,16 @@ function HM.rebuildRoster()
     eventFrame:UnregisterEvent("UNIT_POWER_FREQUENT")
     eventFrame:UnregisterEvent("UNIT_IN_RANGE_UPDATE")
     eventFrame:UnregisterEvent("UNIT_FLAGS")
+    eventFrame:UnregisterEvent("UNIT_HEALTH")
+    eventFrame:UnregisterEvent("UNIT_MAXHEALTH")
+    eventFrame:UnregisterEvent("UNIT_AURA")
     for unit in pairs(healerData) do
         eventFrame:RegisterUnitEvent("UNIT_POWER_FREQUENT", unit)
         eventFrame:RegisterUnitEvent("UNIT_IN_RANGE_UPDATE", unit)
         eventFrame:RegisterUnitEvent("UNIT_FLAGS", unit)
+        eventFrame:RegisterUnitEvent("UNIT_HEALTH", unit)
+        eventFrame:RegisterUnitEvent("UNIT_MAXHEALTH", unit)
+        eventFrame:RegisterUnitEvent("UNIT_AURA", unit)
     end
     local delay = 0.2
     for unit in pairs(healerData) do
@@ -269,10 +318,11 @@ end
 
 function HM.updateUnit(unit)
     if not healerData[unit] then return end
-    local d          = healerData[unit]
+    local d     = healerData[unit]
     d.specIcon  = HM.getSpecIcon(unit, d.class)
     d.connected = UnitIsConnected(unit)
     d.dead      = UnitIsDeadOrGhost(unit)
+    d.regenState = HM.getRegenState(unit)
 end
 
 local sortBuf = {}

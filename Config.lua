@@ -404,7 +404,7 @@ local function createConfigFrame()
 
     local titleLbl = titleBar:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     titleLbl:SetPoint("LEFT", titleBar, "LEFT", 12, 0)
-    titleLbl:SetText("HealerMana")
+    titleLbl:SetText("Healer|cff3399FFMana|r")
     titleLbl:SetTextColor(PRIMARY[1], PRIMARY[2], PRIMARY[3])
 
     local xBtn = CreateFrame("Button", nil, titleBar, "BackdropTemplate")
@@ -976,6 +976,72 @@ local function createConfigFrame()
         })
     end
 
+    local helpPane = newPane("help")
+
+    local HELP_SECTIONS = {
+        {kind = "title", text = "HealerMana"},
+        {kind = "body", text = "Tracks the mana of every healer in your group or raid, shown as a row of bars or a strip of icons, positioned and styled however you like."},
+        {kind = "header", text = "Innervate / Eating & Drinking"},
+        {kind = "body", text = "In Icon style, a healer's icon swaps to the Innervate or Food & Drink icon while they're regenerating mana that way, so you can see who's already getting help."},
+        {kind = "header", text = "Minimap Icon"},
+        {kind = "body", text = "Left-click the minimap icon to open this settings panel.\nRight-click to toggle a 5-healer test preview, so you can check your setup without a real group."},
+        {kind = "header", text = "Slash Commands"},
+        {kind = "body", text = "/hm - open settings\n/hm raid <1-20> - preview that many fake healers\n/hm raid off - restore the real roster\n/hm help - list commands in chat"},
+        {kind = "header", text = "General"},
+        {kind = "body", text = "Display Style (Icons or Bars), out-of-range dimming and its opacity, hiding your own bar, locking the frame in place, and the minimap icon's visibility."},
+        {kind = "header", text = "Layout"},
+        {kind = "body", text = "Arrangement (Horizontal, Vertical, or Grid), icon size or bar width/height, spacing between entries, grid column count, and bar texture."},
+        {kind = "header", text = "Fill Color"},
+        {kind = "body", text = "Class Color or a Custom Color for the bar fill / icon tint, plus separate opacity sliders for bars and for the icon tint overlay."},
+        {kind = "header", text = "Background & Border"},
+        {kind = "body", text = "Background color (Bar style only - hidden behind icon art otherwise) and border color, including a class-color option (Icon style only - Bars have no border)."},
+        {kind = "header", text = "Text"},
+        {kind = "body", text = "Show or hide the name label, long-name handling, name color, the % symbol, percent-text color, font choice, and a manual font size override."},
+        {kind = "header", text = "Sort & Visibility"},
+        {kind = "body", text = "Sort order (alphabetical or by class), whether to show while solo, and which instance types (open world, dungeons, raids, scenarios, battlegrounds, arenas) the tracker appears in."},
+        {kind = "header", text = "Moving the Frame"},
+        {kind = "body", text = "Drag the tracker to reposition it (unless locked in General). Use Reset Position in this panel's footer to snap it back to the default spot."},
+    }
+
+    local helpWidgets = {}
+    for _, section in ipairs(HELP_SECTIONS) do
+        local fs = helpPane:CreateFontString(nil, "OVERLAY",
+            section.kind == "title" and "GameFontNormalLarge" or "GameFontHighlightSmall")
+        fs:SetJustifyH("LEFT")
+        fs:SetJustifyV("TOP")
+        fs:SetWordWrap(true)
+        if section.kind == "title" then
+            fs:SetTextColor(PRIMARY[1], PRIMARY[2], PRIMARY[3])
+        elseif section.kind == "header" then
+            fs:SetTextColor(ACCENT[1], ACCENT[2], ACCENT[3])
+        else
+            fs:SetTextColor(PRIMARY[1], PRIMARY[2], PRIMARY[3])
+        end
+        fs:SetText(section.text)
+        helpWidgets[#helpWidgets + 1] = {fs = fs, kind = section.kind}
+    end
+
+    paneRefresh.help = function()
+        local paneWidth = helpPane:GetWidth()
+        if not paneWidth or paneWidth < 10 then paneWidth = 260 end
+        local y = -10
+        local totalH = 20
+        for i, w in ipairs(helpWidgets) do
+            if i > 1 and w.kind == "header" then
+                y = y - SECTION_GAP
+                totalH = totalH + SECTION_GAP
+            end
+            w.fs:ClearAllPoints()
+            w.fs:SetPoint("TOPLEFT", helpPane, "TOPLEFT", 0, y)
+            w.fs:SetWidth(paneWidth)
+            local h = w.fs:GetStringHeight()
+            y = y - h - 4
+            totalH = totalH + h + 4
+        end
+        helpPane:SetHeight(totalH)
+        if activeTab == helpPane._key then content:SetHeight(totalH) end
+    end
+
     local TAB_DEFS = {
         {key = "general",  label = "General"},
         {key = "layout",   label = "Layout"},
@@ -983,6 +1049,7 @@ local function createConfigFrame()
         {key = "bgBorder", label = "Background & Border"},
         {key = "text",     label = "Text"},
         {key = "sortVis",  label = "Sort & Visibility"},
+        {key = "help",     label = "Help"},
     }
 
     local y = 0
