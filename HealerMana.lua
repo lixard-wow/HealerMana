@@ -103,7 +103,8 @@ HM.eventFrame:SetScript("OnEvent", function(self, event, ...)
             HM.refreshDisplay()
         end
 
-    elseif event == "UNIT_FLAGS" or event == "UNIT_HEALTH" or event == "UNIT_MAXHEALTH" or event == "UNIT_AURA" then
+    elseif event == "UNIT_FLAGS" or event == "UNIT_HEALTH" or event == "UNIT_MAXHEALTH"
+        or event == "UNIT_AURA" or event == "UNIT_CONNECTION" then
         local unit = ...
         if HM.healerData[unit] then
             HM.updateUnit(unit)

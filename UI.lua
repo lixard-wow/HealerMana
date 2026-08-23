@@ -1,4 +1,4 @@
-local ADDON_NAME, HM = ...
+local _, HM = ...
 
 local cfg     = HM.cfg
 local barPool = HM.barPool
@@ -68,7 +68,7 @@ local CLASS_COLOR = {
     EVOKER  = {0.200, 0.580, 0.500},
 }
 
-local _wrapStr = C_StringUtil and C_StringUtil.WrapString
+local _wrapStr = HM.wrapStr
 
 local mainFrame
 local BORDER_OVERHANG = 8
@@ -221,6 +221,18 @@ local function getFillColor(data)
     end
 end
 
+local function setPctText(fs, pct)
+    if HM.isPlainNumber(pct) then
+        local p = math.floor(pct + 0.5)
+        fs:SetText(cfg.showPctSymbol and (p .. "%") or tostring(p))
+    elseif pct ~= nil and _wrapStr then
+        local formatted = cfg.showPctSymbol and format("%.0f%%", pct) or format("%.0f", pct)
+        fs:SetFormattedText("%s", _wrapStr(formatted, "", ""))
+    else
+        fs:SetText("")
+    end
+end
+
 local function renderBar(bar, data)
     if cfg.dimOutOfRange and not UnitIsUnit(data.unit, "player") then
         local inRange = HM.isUnitInRange(data.unit)
@@ -277,14 +289,12 @@ local function renderBar(bar, data)
 
             bar.fill:SetValue(pct or 0)
 
-            if HM.isPlainNumber(pct) then
-                local p = math.floor(pct + 0.5)
-                bar.pctTxt:SetText(cfg.showPctSymbol and (p .. "%") or tostring(p))
-            elseif pct ~= nil and _wrapStr then
-                local formatted = cfg.showPctSymbol and format("%.0f%%", pct) or format("%.0f", pct)
-                bar.pctTxt:SetFormattedText("%s", _wrapStr(formatted, "", ""))
+            if data.regenState == "innervate" then
+                bar.pctTxt:SetText("Innervate")
+            elseif data.regenState == "drinking" then
+                bar.pctTxt:SetText("Mana")
             else
-                bar.pctTxt:SetText("")
+                setPctText(bar.pctTxt, pct)
             end
             if cc and cfg.pctClassColor then
                 bar.pctTxt:SetTextColor(cc[1], cc[2], cc[3])
@@ -358,15 +368,7 @@ local function renderBar(bar, data)
         local pct = data.testPct or HM.readUnitPctRaw(data.unit)
         local fr, fg, fb = getFillColor(data)
 
-        if HM.isPlainNumber(pct) then
-            local p = math.floor(pct + 0.5)
-            bar.pctTxt:SetText(cfg.showPctSymbol and (p .. "%") or tostring(p))
-        elseif pct ~= nil and _wrapStr then
-            local formatted = cfg.showPctSymbol and format("%.0f%%", pct) or format("%.0f", pct)
-            bar.pctTxt:SetFormattedText("%s", _wrapStr(formatted, "", ""))
-        else
-            bar.pctTxt:SetText("")
-        end
+        setPctText(bar.pctTxt, pct)
         bar.tint:SetColorTexture(fr, fg, fb)
         bar.tint:SetAlpha(cfg.iconTintOpacity)
     end

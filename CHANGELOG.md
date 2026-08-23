@@ -1,6 +1,12 @@
 # Changelog
 
-## Unreleased
+## 1.0.1
+- Added a Bars display style as an alternative to icons, with its own width, height, and texture options
+- Settings panel reorganized into tabs (General, Layout, Fill Color, Background & Border, Text, Sort & Visibility, Help)
+- Added a minimap icon — left-click opens settings, right-click toggles a fake-healer preview
+- Added per-instance visibility toggles (open world, dungeons, raids, scenarios, battlegrounds, arenas) and a show-while-solo option
+- Dead and offline healers are now clearly labeled instead of showing a stale mana reading
+- Added a Help tab in settings explaining each option
 - Bar color is now customizable: class color, a custom color, or color-by-mana (low/mid/high thresholds you can pick yourself)
 - Background and border colors can now be customized
 - Name and mana % text colors can now be customized

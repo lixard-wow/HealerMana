@@ -1,13 +1,18 @@
-local ADDON_NAME, HM = ...
+local _, HM = ...
 
 local cfg        = HM.cfg
 local healerData = HM.healerData
 local eventFrame = HM.eventFrame
 local DEFAULTS   = HM.DEFAULTS
 
-local MANA = 0
-local _isSecret   = issecretvalue
-local _scaleTo100 = CurveConstants and CurveConstants.ScaleTo100
+HM.MANA          = 0
+HM.isSecretValue = issecretvalue
+HM.wrapStr       = C_StringUtil and C_StringUtil.WrapString
+HM.scaleTo100    = CurveConstants and CurveConstants.ScaleTo100
+
+local MANA        = HM.MANA
+local _isSecret    = HM.isSecretValue
+local _scaleTo100  = HM.scaleTo100
 
 HM.INNERVATE_SPELL_ID = 29166
 HM.FOOD_DRINK_NAMES   = {"Refreshment", "Drink", "Mana Lily Tea", "Argentleaf Tea"}
@@ -280,6 +285,7 @@ function HM.rebuildRoster()
     eventFrame:UnregisterEvent("UNIT_HEALTH")
     eventFrame:UnregisterEvent("UNIT_MAXHEALTH")
     eventFrame:UnregisterEvent("UNIT_AURA")
+    eventFrame:UnregisterEvent("UNIT_CONNECTION")
     for unit in pairs(healerData) do
         eventFrame:RegisterUnitEvent("UNIT_POWER_FREQUENT", unit)
         eventFrame:RegisterUnitEvent("UNIT_IN_RANGE_UPDATE", unit)
@@ -287,6 +293,7 @@ function HM.rebuildRoster()
         eventFrame:RegisterUnitEvent("UNIT_HEALTH", unit)
         eventFrame:RegisterUnitEvent("UNIT_MAXHEALTH", unit)
         eventFrame:RegisterUnitEvent("UNIT_AURA", unit)
+        eventFrame:RegisterUnitEvent("UNIT_CONNECTION", unit)
     end
     local delay = 0.2
     for unit in pairs(healerData) do

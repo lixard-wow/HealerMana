@@ -1,12 +1,25 @@
-local ADDON_NAME, HM = ...
+local _, HM = ...
 
 local cfg        = HM.cfg
 local healerData = HM.healerData
 
-local MANA = 0
-local _isSecret   = issecretvalue
-local _wrapStr    = C_StringUtil and C_StringUtil.WrapString
-local _scaleTo100 = CurveConstants and CurveConstants.ScaleTo100
+local MANA        = HM.MANA
+local _isSecret    = HM.isSecretValue
+local _wrapStr     = HM.wrapStr
+local _scaleTo100  = HM.scaleTo100
+
+local function forEachGroupUnit(fn)
+    if IsInRaid() then
+        for i = 1, GetNumGroupMembers() do
+            local u = "raid" .. i
+            if UnitExists(u) then fn(u) end
+        end
+    elseif IsInGroup() then
+        for _, u in ipairs({"player", "party1", "party2", "party3", "party4"}) do
+            if UnitExists(u) then fn(u) end
+        end
+    end
+end
 
 local function printHelp()
     print("|cff00ccffHealerMana|r - type |cffffff00/hm|r to open the settings panel, or:")
@@ -35,24 +48,11 @@ local function printDebug()
 
     if count == 0 then
         print("  (scanning group units for roles...)")
-        if IsInRaid() then
-            for i = 1, GetNumGroupMembers() do
-                local u = "raid" .. i
-                if UnitExists(u) then
-                    print(string.format("    %s  name=%-12s  role=%s",
-                        u, tostring(UnitName(u)),
-                        tostring(UnitGroupRolesAssigned(u))))
-                end
-            end
-        elseif IsInGroup() then
-            for _, u in ipairs({"player","party1","party2","party3","party4"}) do
-                if UnitExists(u) then
-                    print(string.format("    %s  name=%-12s  role=%s",
-                        u, tostring(UnitName(u)),
-                        tostring(UnitGroupRolesAssigned(u))))
-                end
-            end
-        end
+        forEachGroupUnit(function(u)
+            print(string.format("    %s  name=%-12s  role=%s",
+                u, tostring(UnitName(u)),
+                tostring(UnitGroupRolesAssigned(u))))
+        end)
     else
         print("  _isSecret=" .. tostring(_isSecret ~= nil) ..
               "  _wrapStr=" .. tostring(_wrapStr ~= nil) ..
@@ -120,16 +120,8 @@ local function printRegenDebug()
     for unit in pairs(healerData) do reportUnit(unit) end
     if checked == 0 then
         print("  (no tracked healers - scanning group units instead)")
-        if IsInRaid() then
-            for i = 1, GetNumGroupMembers() do
-                local u = "raid" .. i
-                if UnitExists(u) then reportUnit(u) end
-            end
-        elseif IsInGroup() then
-            for _, u in ipairs({"player", "party1", "party2", "party3", "party4"}) do
-                if UnitExists(u) then reportUnit(u) end
-            end
-        elseif UnitExists("player") then
+        forEachGroupUnit(reportUnit)
+        if not IsInRaid() and not IsInGroup() and UnitExists("player") then
             reportUnit("player")
         end
     end
