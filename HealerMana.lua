@@ -1,8 +1,7 @@
 local ADDON_NAME, HM = ...
 
 HM.DEFAULTS = {
-    sortAlpha        = true,
-    sortClass        = false,
+    sortMode         = "alpha",
     locked           = false,
     borderClassColor = true,
     nameClassColor   = true,
@@ -77,7 +76,13 @@ HM.eventFrame:SetScript("OnEvent", function(self, event, ...)
         HM.setupSlash()
         HM.initMinimapIcon()
         C_Timer.NewTicker(0.5, function()
-            if next(HM.healerData) then HM.refreshDisplay() end
+            if not next(HM.healerData) then return end
+            if not HM.testModeActive then
+                for unit in pairs(HM.healerData) do
+                    HM.updateUnit(unit)
+                end
+            end
+            HM.refreshDisplay()
         end)
         print("|cff00ccffHealerMana|r loaded.  Type |cffffff00/hm|r for options.")
 

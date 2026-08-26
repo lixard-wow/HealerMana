@@ -24,8 +24,8 @@ end
 local function printHelp()
     print("|cff00ccffHealerMana|r - type |cffffff00/hm|r to open the settings panel, or:")
     print("  |cffffff00/hm lock|r    - toggle frame lock/unlock")
-    print("  |cffffff00/hm alpha|r   - toggle alphabetical sort")
-    print("  |cffffff00/hm class|r   - toggle sort by class")
+    print("  |cffffff00/hm alpha|r   - sort alphabetically")
+    print("  |cffffff00/hm class|r   - sort by healer class")
     print("  |cffffff00/hm layout|r  - toggle horizontal/vertical layout")
     print("  |cffffff00/hm reset|r   - reset frame to default position")
     print("  |cffffff00/hm debug|r   - dump healer roster and mana readings")
@@ -144,15 +144,13 @@ function HM.setupSlash()
                   (cfg.locked and "|cffff4444locked|r (click-through)" or "|cff00ff00unlocked|r (drag to move)"))
 
         elseif cmd == "alpha" then
-            HM.saveKey("sortAlpha", not cfg.sortAlpha)
-            print("|cff00ccffHealerMana|r: alphabetical sort " ..
-                  (cfg.sortAlpha and "|cff00ff00ON|r" or "|cffff4444OFF|r"))
+            HM.saveKey("sortMode", "alpha")
+            print("|cff00ccffHealerMana|r: sort set to |cff00ff00alphabetical|r")
             HM.refreshDisplay()
 
         elseif cmd == "class" then
-            HM.saveKey("sortClass", not cfg.sortClass)
-            print("|cff00ccffHealerMana|r: class sort " ..
-                  (cfg.sortClass and "|cff00ff00ON|r" or "|cffff4444OFF|r"))
+            HM.saveKey("sortMode", "class")
+            print("|cff00ccffHealerMana|r: sort set to |cff00ff00healer class|r")
             HM.refreshDisplay()
 
         elseif cmd == "layout" then

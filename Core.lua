@@ -340,7 +340,7 @@ function HM.getSorted()
     end
     table.sort(sortBuf, function(a, b)
         local ad, bd = a.data, b.data
-        if cfg.sortClass and ad.class ~= bd.class then
+        if cfg.sortMode == "class" and ad.class ~= bd.class then
             return ad.class < bd.class
         end
         return (ad.name or "") <= (bd.name or "")

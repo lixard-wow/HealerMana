@@ -45,7 +45,7 @@ Also reachable without typing: minimap icon left-click (settings) / right-click 
 ## SavedVariables
 - Name: HealerManaDB
 - Structure:
-  - sortAlpha, sortClass, sortMana (sort toggles)
+  - sortMode ("alpha" or "class")
   - locked (frame click-through)
   - borderClassColor, showPctSymbol, showName, dimOutOfRange (display toggles)
   - cellSize, cellSpacing (sizing)

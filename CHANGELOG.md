@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.2
+- Fixed a bug where a dead healer wouldn't show as "Dead" right away, and could get stuck showing "Dead" after being revived
+- Sort options simplified into a single Sort By choice (Alphabetical or Healer Class) instead of two separate toggles
+
 ## 1.0.1
 - Added a Bars display style as an alternative to icons, with its own width, height, and texture options
 - Settings panel reorganized into tabs (General, Layout, Fill Color, Background & Border, Text, Sort & Visibility, Help)

@@ -926,13 +926,14 @@ local function createConfigFrame()
 
     local sortVisPane = newPane("sortVis")
 
-    local cbAlpha = makeToggle(sortVisPane, "Alphabetical",
-        function() return cfg.sortAlpha end,
-        function(v) HM.saveKey("sortAlpha", v); HM.refreshDisplay() end)
-
-    local cbClass = makeToggle(sortVisPane, "By healer class",
-        function() return cfg.sortClass end,
-        function(v) HM.saveKey("sortClass", v); HM.refreshDisplay() end)
+    local sortModeDropdown = makeDropdown(sortVisPane, "Sort By", {
+            {value = "alpha", label = "Alphabetical"},
+            {value = "class", label = "Healer Class"},
+        }, function() return cfg.sortMode end,
+        function(value)
+            HM.saveKey("sortMode", value)
+            HM.refreshDisplay()
+        end)
 
     local cbShowWhenSolo = makeToggle(sortVisPane, "Show when Solo",
         function() return cfg.showWhenSolo end,
@@ -964,8 +965,7 @@ local function createConfigFrame()
 
     paneRefresh.sortVis = function()
         layoutRows(sortVisPane, {
-            {w = cbAlpha,             h = TOGGLE_H, stretch = false, group = "sort"},
-            {w = cbClass,             h = TOGGLE_H, stretch = false, group = "sort"},
+            {w = sortModeDropdown,    h = DROPDOWN_H, group = "dropdown"},
             {w = cbShowWhenSolo,      h = TOGGLE_H, stretch = false, group = "visibility"},
             {w = cbShowOpenWorld,     h = TOGGLE_H, stretch = false, group = "visibility"},
             {w = cbShowDungeons,      h = TOGGLE_H, stretch = false, group = "visibility"},
@@ -1106,8 +1106,7 @@ local function createConfigFrame()
         nameFontSlider:SetValue(cfg.nameFontSizeManual)
         pctFontSlider:SetValue(cfg.pctFontSizeManual)
 
-        cbAlpha:SetChecked(cfg.sortAlpha)
-        cbClass:SetChecked(cfg.sortClass)
+        sortModeDropdown:SetValue(cfg.sortMode)
         cbShowWhenSolo:SetChecked(cfg.showWhenSolo)
         cbShowOpenWorld:SetChecked(cfg.showInOpenWorld)
         cbShowDungeons:SetChecked(cfg.showInDungeons)
