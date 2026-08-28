@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.3
+- Fixed sliders in the settings panel getting their handle cut off when dragged all the way to the left or right edge
+- Fixed Holy Priests sometimes showing the Discipline Priest icon instead of their own
+- Fixed other players briefly flashing into the tracker before the addon could tell they weren't actually a healer — it now waits until it's sure before showing anyone
+
 ## 1.0.2
 - Fixed a bug where a dead healer wouldn't show as "Dead" right away, and could get stuck showing "Dead" after being revived
 - Sort options simplified into a single Sort By choice (Alphabetical or Healer Class) instead of two separate toggles

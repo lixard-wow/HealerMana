@@ -1,21 +1,6 @@
 local ADDON_NAME, HM = ...
 
 local ICON_PATH = "Interface\\AddOns\\HealerMana\\HealerMana_32x32.tga"
-local RAID_PREVIEW_COUNT = 5
-
-local function togglePreview()
-    if HM.testModeActive then
-        HM.testModeActive = false
-        print("|cff00ccffHealerMana|r: test mode OFF, restoring real roster.")
-        HM.rebuildRoster()
-    else
-        HM.testModeActive = true
-        HM.generateTestRoster(RAID_PREVIEW_COUNT)
-        print("|cff00ccffHealerMana|r: test mode ON - " .. RAID_PREVIEW_COUNT ..
-              " fake healers. Right-click again to restore.")
-    end
-    HM.refreshDisplay()
-end
 
 function HM.setMinimapIconShown(shown)
     local LibStub = _G.LibStub
@@ -39,12 +24,8 @@ function HM.initMinimapIcon()
         type = "launcher",
         text = "HealerMana",
         icon = ICON_PATH,
-        OnClick = function(self, button)
-            if button == "RightButton" then
-                togglePreview()
-            else
-                HM.openConfig()
-            end
+        OnClick = function()
+            HM.openConfig()
         end,
         OnTooltipShow = function(tt)
             tt:AddLine("HealerMana")
@@ -52,7 +33,6 @@ function HM.initMinimapIcon()
             tt:AddLine("Tracks the mana of every healer in your group or raid.", 1, 1, 1, true)
             tt:AddLine(" ")
             tt:AddLine("|cff1eff00Left-Click|r Open settings")
-            tt:AddLine("|cff1eff00Right-Click|r Toggle " .. RAID_PREVIEW_COUNT .. "-healer preview")
         end,
     })
 

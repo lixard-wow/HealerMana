@@ -46,6 +46,7 @@ HM.DEFAULTS = {
     barFillOpacity     = 1.00,
     iconTintOpacity    = 0.22,
     outOfRangeOpacity  = 0.35,
+    testPreviewCount   = 5,
 }
 
 HM.cfg             = {}
@@ -84,6 +85,11 @@ HM.eventFrame:SetScript("OnEvent", function(self, event, ...)
             end
             HM.refreshDisplay()
         end)
+        C_Timer.NewTicker(3, function()
+            if next(HM.healerData) and not HM.testModeActive then
+                HM.retryUnresolvedIcons()
+            end
+        end)
         print("|cff00ccffHealerMana|r loaded.  Type |cffffff00/hm|r for options.")
 
     elseif event == "PLAYER_ENTERING_WORLD" then
@@ -93,7 +99,8 @@ HM.eventFrame:SetScript("OnEvent", function(self, event, ...)
             HM.refreshDisplay()
         end)
 
-    elseif event == "GROUP_ROSTER_UPDATE" or event == "ROLE_CHANGED_INFORM" then
+    elseif event == "GROUP_ROSTER_UPDATE" or event == "ROLE_CHANGED_INFORM"
+        or event == "PLAYER_SPECIALIZATION_CHANGED" or event == "INSPECT_READY" then
         if rosterUpdateQueued then return end
         rosterUpdateQueued = true
         C_Timer.After(0.5, function()
@@ -124,19 +131,6 @@ HM.eventFrame:SetScript("OnEvent", function(self, event, ...)
 
     elseif event == "PLAYER_REGEN_ENABLED" then
         HM.refreshDisplay()
-
-    elseif event == "INSPECT_READY" then
-        HM.pruneNonHealers()
-        for unit in pairs(HM.healerData) do
-            HM.healerData[unit].specIcon = HM.getSpecIcon(unit, HM.healerData[unit].class)
-        end
-        HM.refreshDisplay()
-
-    elseif event == "PLAYER_SPECIALIZATION_CHANGED" then
-        if HM.healerData["player"] then
-            HM.healerData["player"].specIcon = HM.getSpecIcon("player", HM.healerData["player"].class)
-            HM.refreshDisplay()
-        end
     end
 end)
 

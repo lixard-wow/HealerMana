@@ -128,30 +128,6 @@ local function resolveUnitRole(unit)
     return nil
 end
 
-local function isHealer(unit)
-    if not UnitExists(unit) then return false end
-    local role = resolveUnitRole(unit)
-    if role == "HEALER" then return true end
-    if role == nil and not UnitIsUnit(unit, "player") then
-        return true
-    end
-    return false
-end
-
-function HM.pruneNonHealers()
-    local changed = false
-    for unit in pairs(healerData) do
-        if not UnitIsUnit(unit, "player") then
-            local role = resolveUnitRole(unit)
-            if role and role ~= "HEALER" then
-                healerData[unit] = nil
-                changed = true
-            end
-        end
-    end
-    return changed
-end
-
 function HM.shouldShowForCurrentInstance()
     local inInstance, instanceType = IsInInstance()
     if not inInstance then return cfg.showInOpenWorld end
@@ -192,11 +168,10 @@ local classSpecIcon = {}
 function HM.buildSpecIcons()
     wipe(classSpecIcon)
     for class, specIDs in pairs(HEALER_SPEC_ID) do
-        for _, specID in ipairs(specIDs) do
-            local ok, _, _, _, icon = pcall(GetSpecializationInfoByID, specID)
+        if #specIDs == 1 then
+            local ok, _, _, _, icon = pcall(GetSpecializationInfoByID, specIDs[1])
             if ok and icon then
                 classSpecIcon[class] = icon
-                break
             end
         end
     end
@@ -235,15 +210,20 @@ local function snapshotUnit(unit)
 end
 
 local TEST_CLASSES = {"DRUID", "PALADIN", "PRIEST", "SHAMAN", "MONK", "EVOKER"}
+local testClassIcon = {}
 function HM.generateTestRoster(n)
     wipe(healerData)
     for i = 1, n do
         local class = TEST_CLASSES[((i - 1) % #TEST_CLASSES) + 1]
+        if testClassIcon[class] == nil then
+            local ok, _, _, _, icon = pcall(GetSpecializationInfoByID, HEALER_SPEC_ID[class][1])
+            testClassIcon[class] = (ok and icon) or false
+        end
         healerData["test" .. i] = {
             unit      = "player",
             name      = "TestHealer" .. i,
             class     = class,
-            specIcon  = classSpecIcon[class],
+            specIcon  = testClassIcon[class] or nil,
             connected = true,
             dead      = false,
             testPct   = (n > 1) and (5 + (i - 1) * 90 / (n - 1)) or 50,
@@ -254,28 +234,35 @@ end
 function HM.rebuildRoster()
     if HM.testModeActive then return end
     wipe(healerData)
+
+    local allUnits = {}
     if IsInRaid() then
-        local n = GetNumGroupMembers()
-        for i = 1, n do
-            local unit = "raid" .. i
-            if isHealer(unit) and not (cfg.hideSelf and UnitIsUnit(unit, "player")) then
-                healerData[unit] = snapshotUnit(unit)
-            end
+        for i = 1, GetNumGroupMembers() do
+            allUnits[#allUnits + 1] = "raid" .. i
         end
     elseif IsInGroup() then
-        if isHealer("player") and not cfg.hideSelf then
-            healerData["player"] = snapshotUnit("player")
-        end
-        local n = GetNumGroupMembers() - 1
-        for i = 1, n do
-            local unit = "party" .. i
-            if isHealer(unit) then
-                healerData[unit] = snapshotUnit(unit)
-            end
+        allUnits[#allUnits + 1] = "player"
+        for i = 1, GetNumGroupMembers() - 1 do
+            allUnits[#allUnits + 1] = "party" .. i
         end
     elseif cfg.showWhenSolo then
-        if isHealer("player") and not cfg.hideSelf then
-            healerData["player"] = snapshotUnit("player")
+        allUnits[#allUnits + 1] = "player"
+    end
+
+    local delay = 0.2
+    for _, unit in ipairs(allUnits) do
+        if UnitExists(unit) then
+            local role = resolveUnitRole(unit)
+            if role == "HEALER" and not (cfg.hideSelf and UnitIsUnit(unit, "player")) then
+                healerData[unit] = snapshotUnit(unit)
+            end
+            if role ~= "TANK" and role ~= "DAMAGER" and not UnitIsUnit(unit, "player") then
+                local u = unit
+                C_Timer.After(delay, function()
+                    if UnitExists(u) then NotifyInspect(u) end
+                end)
+                delay = delay + 0.5
+            end
         end
     end
 
@@ -295,16 +282,23 @@ function HM.rebuildRoster()
         eventFrame:RegisterUnitEvent("UNIT_AURA", unit)
         eventFrame:RegisterUnitEvent("UNIT_CONNECTION", unit)
     end
-    local delay = 0.2
-    for unit in pairs(healerData) do
-        if not UnitIsUnit(unit, "player") then
-            local u = unit
-            C_Timer.After(delay, function()
-                if UnitExists(u) and healerData[u] then
-                    NotifyInspect(u)
-                end
-            end)
-            delay = delay + 0.5
+end
+
+function HM.toggleTestPreview()
+    if HM.testModeActive then
+        HM.testModeActive = false
+        HM.rebuildRoster()
+    else
+        HM.testModeActive = true
+        HM.generateTestRoster(cfg.testPreviewCount)
+    end
+    HM.refreshDisplay()
+end
+
+function HM.retryUnresolvedIcons()
+    for unit, data in pairs(healerData) do
+        if not data.specIcon and not UnitIsUnit(unit, "player") and UnitExists(unit) then
+            NotifyInspect(unit)
         end
     end
 end

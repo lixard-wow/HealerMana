@@ -248,17 +248,23 @@ local function renderBar(bar, data)
     end
 
     if cfg.displayStyle == "bar" then
+        local displayName = data.name
+        if data.regenState == "innervate" then
+            displayName = "Innervate"
+        elseif data.regenState == "drinking" then
+            displayName = "Drinking"
+        end
         if bar.nameTxt then
-            if bar.nameTxt._lastName ~= data.name then
+            if bar.nameTxt._lastName ~= displayName then
                 local maxW = math.max(bar:GetWidth() - PCT_RESERVE - 8, 10)
                 if cfg.nameOverflow == "truncate" then
                     bar.nameTxt:SetFont(HM.getFontPath(), effectiveNameFontSize(autoBarFontSize(cfg.barHeight)), "OUTLINE")
-                    truncateTextToFit(bar.nameTxt, data.name, maxW)
+                    truncateTextToFit(bar.nameTxt, displayName, maxW)
                 else
-                    bar.nameTxt:SetText(data.name)
+                    bar.nameTxt:SetText(displayName)
                     shrinkTextToFit(bar.nameTxt, effectiveNameFontSize(autoBarFontSize(cfg.barHeight)), maxW)
                 end
-                bar.nameTxt._lastName = data.name
+                bar.nameTxt._lastName = displayName
             end
         end
         local cc = CLASS_COLOR[data.class]
@@ -289,13 +295,7 @@ local function renderBar(bar, data)
 
             bar.fill:SetValue(pct or 0)
 
-            if data.regenState == "innervate" then
-                bar.pctTxt:SetText("Innervate")
-            elseif data.regenState == "drinking" then
-                bar.pctTxt:SetText("Mana")
-            else
-                setPctText(bar.pctTxt, pct)
-            end
+            setPctText(bar.pctTxt, pct)
             if cc and cfg.pctClassColor then
                 bar.pctTxt:SetTextColor(cc[1], cc[2], cc[3])
             else
@@ -308,14 +308,19 @@ local function renderBar(bar, data)
     end
 
     local iconID = data.specIcon
-    if data.regenState == "innervate" then
-        iconID = HM.innervateIcon or iconID
-    elseif data.regenState == "drinking" then
-        iconID = HM.foodDrinkIcon or iconID
+    local showingRegenIcon = false
+    if data.regenState == "innervate" and HM.innervateIcon then
+        iconID = HM.innervateIcon
+        showingRegenIcon = true
+    elseif data.regenState == "drinking" and HM.foodDrinkIcon then
+        iconID = HM.foodDrinkIcon
+        showingRegenIcon = true
     end
     if iconID then
         bar.icon:SetTexture(iconID)
         bar.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+    else
+        bar.icon:SetTexture(nil)
     end
 
     local cc = CLASS_COLOR[data.class]
@@ -349,13 +354,13 @@ local function renderBar(bar, data)
         bar.pctTxt:SetTextColor(0.9, 0.3, 0.3)
         bar.icon:SetAlpha(0.4)
         bar.tint:SetColorTexture(0.4, 0.4, 0.4)
-        bar.tint:SetAlpha(cfg.iconTintOpacity)
+        bar.tint:SetAlpha(showingRegenIcon and 0 or cfg.iconTintOpacity)
     elseif not data.connected then
         bar.pctTxt:SetText("Offline")
         bar.pctTxt:SetTextColor(0.6, 0.6, 0.6)
         bar.icon:SetAlpha(0.4)
         bar.tint:SetColorTexture(0.4, 0.4, 0.4)
-        bar.tint:SetAlpha(cfg.iconTintOpacity)
+        bar.tint:SetAlpha(showingRegenIcon and 0 or cfg.iconTintOpacity)
     else
         bar.icon:SetAlpha(1)
         if cc and cfg.pctClassColor then
@@ -370,7 +375,7 @@ local function renderBar(bar, data)
 
         setPctText(bar.pctTxt, pct)
         bar.tint:SetColorTexture(fr, fg, fb)
-        bar.tint:SetAlpha(cfg.iconTintOpacity)
+        bar.tint:SetAlpha(showingRegenIcon and 0 or cfg.iconTintOpacity)
     end
 
     bar:Show()

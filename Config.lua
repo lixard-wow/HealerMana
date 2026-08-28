@@ -10,7 +10,7 @@ local BTN_HOV = {0.20, 0.20, 0.20, 1.00}
 local BORDER  = {0.22, 0.22, 0.22}
 local MUTED   = {0.70, 0.70, 0.70}
 local PRIMARY = {0.92, 0.91, 0.86}
-local ACCENT  = {0.78, 0.66, 0.22}
+local ACCENT  = {0.20, 0.60, 1.00}
 
 local function addBorder(frame)
     local function edge(a, b, horiz)
@@ -98,6 +98,8 @@ end
 
 local function makeSlider(parent, labelText, minVal, maxVal, stepVal, onChange)
     local TRACK_H = 3
+    local THUMB_SIZE = 14
+    local THUMB_RADIUS = THUMB_SIZE / 2
     local s = CreateFrame("Frame", nil, parent)
     s:SetHeight(40)
 
@@ -112,8 +114,8 @@ local function makeSlider(parent, labelText, minVal, maxVal, stepVal, onChange)
     s.valTxt:SetTextColor(ACCENT[1], ACCENT[2], ACCENT[3])
 
     local track = CreateFrame("Frame", nil, s)
-    track:SetPoint("TOPLEFT",  s, "TOPLEFT",  0, -20)
-    track:SetPoint("TOPRIGHT", s, "TOPRIGHT", 0, -20)
+    track:SetPoint("TOPLEFT",  s, "TOPLEFT",  THUMB_RADIUS, -20)
+    track:SetPoint("TOPRIGHT", s, "TOPRIGHT", -THUMB_RADIUS, -20)
     track:SetHeight(TRACK_H)
     track.bg = track:CreateTexture(nil, "BACKGROUND")
     track.bg:SetAllPoints()
@@ -126,7 +128,7 @@ local function makeSlider(parent, labelText, minVal, maxVal, stepVal, onChange)
     fill:SetColorTexture(ACCENT[1], ACCENT[2], ACCENT[3], 0.7)
 
     local thumb = CreateFrame("Frame", nil, track)
-    thumb:SetSize(14, 14)
+    thumb:SetSize(THUMB_SIZE, THUMB_SIZE)
     thumb:SetFrameLevel(track:GetFrameLevel() + 1)
 
     local thumbRing = thumb:CreateTexture(nil, "BACKGROUND")
@@ -193,6 +195,39 @@ local function makeSlider(parent, labelText, minVal, maxVal, stepVal, onChange)
     end)
     track:HookScript("OnSizeChanged", redraw)
     s:SetValue(minVal)
+    return s
+end
+
+local function makeStepper(parent, getVal, onChange, minVal, maxVal)
+    local s = CreateFrame("Frame", nil, parent)
+    s:SetSize(96, 24)
+
+    local minusBtn = flatBtn(s, "-", 24, 24)
+    minusBtn:SetPoint("LEFT", s, "LEFT", 0, 0)
+
+    local plusBtn = flatBtn(s, "+", 24, 24)
+    plusBtn:SetPoint("RIGHT", s, "RIGHT", 0, 0)
+
+    local valTxt = s:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    valTxt:SetPoint("TOPLEFT",     minusBtn, "TOPRIGHT",    0, 0)
+    valTxt:SetPoint("BOTTOMRIGHT", plusBtn,  "BOTTOMLEFT",  0, 0)
+    valTxt:SetJustifyH("CENTER")
+    valTxt:SetTextColor(PRIMARY[1], PRIMARY[2], PRIMARY[3])
+
+    function s:Refresh()
+        valTxt:SetText(tostring(getVal()))
+    end
+
+    minusBtn:SetScript("OnClick", function()
+        onChange(math.max(minVal, getVal() - 1))
+        s:Refresh()
+    end)
+    plusBtn:SetScript("OnClick", function()
+        onChange(math.min(maxVal, getVal() + 1))
+        s:Refresh()
+    end)
+
+    s:Refresh()
     return s
 end
 
@@ -451,6 +486,35 @@ local function createConfigFrame()
     local closeFootBtn = flatBtn(footer, "Close", 80, 24)
     closeFootBtn:SetPoint("RIGHT", footer, "RIGHT", -12, 0)
     closeFootBtn:SetScript("OnClick", function() f:Hide() end)
+
+    local previewGroup = CreateFrame("Frame", nil, footer)
+    previewGroup:SetSize(234, 24)
+    previewGroup:SetPoint("LEFT", resetBtn, "RIGHT", 10, 0)
+
+    local previewBtn = flatBtn(previewGroup, "Start Preview", 130, 24)
+    previewBtn:SetPoint("LEFT", previewGroup, "LEFT", 0, 0)
+
+    local previewStepper = makeStepper(previewGroup,
+        function() return cfg.testPreviewCount end,
+        function(v)
+            HM.saveKey("testPreviewCount", v)
+            if HM.testModeActive then
+                HM.generateTestRoster(v)
+                HM.refreshDisplay()
+            end
+        end,
+        1, 20)
+    previewStepper:SetPoint("RIGHT", previewGroup, "RIGHT", 0, 0)
+
+    local function refreshPreviewBtn()
+        previewBtn.lbl:SetText(HM.testModeActive and "Stop Preview" or "Start Preview")
+    end
+    refreshPreviewBtn()
+
+    previewBtn:SetScript("OnClick", function()
+        HM.toggleTestPreview()
+        refreshPreviewBtn()
+    end)
 
     local body = CreateFrame("Frame", nil, f)
     body:SetPoint("TOPLEFT",     titleBar, "BOTTOMLEFT", 0, 0)
@@ -979,12 +1043,14 @@ local function createConfigFrame()
     local helpPane = newPane("help")
 
     local HELP_SECTIONS = {
-        {kind = "title", text = "HealerMana"},
+        {kind = "title", text = "Healer|cff3399FFMana|r"},
         {kind = "body", text = "Tracks the mana of every healer in your group or raid, shown as a row of bars or a strip of icons, positioned and styled however you like."},
-        {kind = "header", text = "Innervate / Eating & Drinking"},
-        {kind = "body", text = "In Icon style, a healer's icon swaps to the Innervate or Food & Drink icon while they're regenerating mana that way, so you can see who's already getting help."},
+        {kind = "header", text = "Innervate / Eating & Drinking (Work in Progress)"},
+        {kind = "body", text = "In Icon style, a healer's icon is meant to swap to the Innervate or Food & Drink icon while they're regenerating mana that way. This feature is still a work in progress and doesn't work correctly yet."},
         {kind = "header", text = "Minimap Icon"},
-        {kind = "body", text = "Left-click the minimap icon to open this settings panel.\nRight-click to toggle a 5-healer test preview, so you can check your setup without a real group."},
+        {kind = "body", text = "Click the minimap icon to open this settings panel."},
+        {kind = "header", text = "Test Preview"},
+        {kind = "body", text = "Use the Start Preview button and the count next to it in this panel's footer to fill the tracker with fake healers, so you can check your setup without a real group. Stop Preview restores your real roster."},
         {kind = "header", text = "Slash Commands"},
         {kind = "body", text = "/hm - open settings\n/hm raid <1-20> - preview that many fake healers\n/hm raid off - restore the real roster\n/hm help - list commands in chat"},
         {kind = "header", text = "General"},
@@ -1114,6 +1180,9 @@ local function createConfigFrame()
         cbShowScenarios:SetChecked(cfg.showInScenarios)
         cbShowBattlegrounds:SetChecked(cfg.showInBattlegrounds)
         cbShowArenas:SetChecked(cfg.showInArenas)
+
+        refreshPreviewBtn()
+        previewStepper:Refresh()
 
         switchTab(activeTab or "general")
     end)

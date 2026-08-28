@@ -107,15 +107,12 @@ local function printRegenDebug()
         end
         local storedRegen = healerData[unit] and healerData[unit].regenState
         local storedDead  = healerData[unit] and healerData[unit].dead
-        print(string.format(
-            "  [%s] %s  innervateOk=%s type=%s  %s  liveRegenState=%s  storedRegenState=%s  liveDead=%s  storedDead=%s",
-            unit, tostring(UnitName(unit)),
-            tostring(ok1), tostring(type(innervate)),
-            table.concat(nameResults, " "),
-            tostring(HM.getRegenState(unit)),
-            tostring(storedRegen),
-            tostring(UnitIsDeadOrGhost(unit)),
-            tostring(storedDead)))
+        print(string.format("  [%s] %s  innervateOk=%s type=%s",
+            unit, tostring(UnitName(unit)), tostring(ok1), tostring(type(innervate))))
+        print("    names: " .. table.concat(nameResults, " "))
+        print(string.format("    liveRegenState=%s  storedRegenState=%s  liveDead=%s  storedDead=%s",
+            tostring(HM.getRegenState(unit)), tostring(storedRegen),
+            tostring(UnitIsDeadOrGhost(unit)), tostring(storedDead)))
     end
     for unit in pairs(healerData) do reportUnit(unit) end
     if checked == 0 then
@@ -174,9 +171,10 @@ function HM.setupSlash()
                 else
                     n = math.min(math.floor(n), 20)
                     HM.testModeActive = true
+                    HM.saveKey("testPreviewCount", n)
                     HM.generateTestRoster(n)
                     print("|cff00ccffHealerMana|r: test mode ON - " .. n ..
-                          " fake healers (TestHealer" .. n .. " is dead). /hm raid off to restore.")
+                          " fake healers. /hm raid off to restore.")
                     HM.refreshDisplay()
                 end
             end
