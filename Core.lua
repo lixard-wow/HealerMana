@@ -7,41 +7,54 @@ local DEFAULTS   = HM.DEFAULTS
 
 HM.MANA          = 0
 HM.isSecretValue = issecretvalue
+HM.isSecretTable = issecrettable
 HM.wrapStr       = C_StringUtil and C_StringUtil.WrapString
 HM.scaleTo100    = CurveConstants and CurveConstants.ScaleTo100
 
 local MANA        = HM.MANA
 local _isSecret    = HM.isSecretValue
+local _isSecretTable = HM.isSecretTable
 local _scaleTo100  = HM.scaleTo100
 
-HM.INNERVATE_SPELL_ID = 29166
-HM.FOOD_DRINK_NAMES   = {"Refreshment", "Drink", "Mana Lily Tea", "Argentleaf Tea"}
+HM.FOOD_SPELL_ID       = 45618
+HM.DRINK_SPELL_ID      = 43183
+HM.FOOD_DRINK_SPELL_ID = 192002
+HM.QUIET_CONTEMPLATION_SPELL_ID = 461063
 
-HM.innervateIcon = C_Spell.GetSpellTexture(HM.INNERVATE_SPELL_ID)
-HM.foodDrinkIcon = nil
+HM.FOOD_DRINK_SPELL_IDS = {HM.FOOD_SPELL_ID, HM.DRINK_SPELL_ID, HM.FOOD_DRINK_SPELL_ID, HM.QUIET_CONTEMPLATION_SPELL_ID}
+
+HM.FOOD_DRINK_NAMES = {"Refreshment", "Drink", "Mana Lily Tea", "Argentleaf Tea", "Tranq Bloom Tea"}
+
+local function isUsableAuraTable(aura)
+    if type(aura) ~= "table" then return false end
+    if _isSecretTable and _isSecretTable(aura) then return false end
+    return true
+end
 
 local function auraDataBySpellID(unit, spellID)
     local ok, aura = pcall(C_UnitAuras.GetUnitAuraBySpellID, unit, spellID)
-    if ok and type(aura) == "table" then return aura end
+    if ok and isUsableAuraTable(aura) then return aura end
     return nil
 end
 
 local function auraDataByName(unit, name)
     local ok, aura = pcall(C_UnitAuras.GetAuraDataBySpellName, unit, name, "HELPFUL")
-    if ok and type(aura) == "table" then return aura end
+    if ok and isUsableAuraTable(aura) then return aura end
     return nil
 end
 
 function HM.getRegenState(unit)
     if not UnitExists(unit) then return nil end
-    if auraDataBySpellID(unit, HM.INNERVATE_SPELL_ID) then return "innervate" end
+    for _, spellID in ipairs(HM.FOOD_DRINK_SPELL_IDS) do
+        local aura = auraDataBySpellID(unit, spellID)
+        if aura then
+            return "drinking", type(aura.icon) == "number" and aura.icon or nil
+        end
+    end
     for _, name in ipairs(HM.FOOD_DRINK_NAMES) do
         local aura = auraDataByName(unit, name)
         if aura then
-            if not HM.foodDrinkIcon and type(aura.icon) == "number" then
-                HM.foodDrinkIcon = aura.icon
-            end
-            return "drinking"
+            return "drinking", type(aura.icon) == "number" and aura.icon or nil
         end
     end
     return nil
@@ -102,30 +115,74 @@ end
 
 local resolvedRoleByName = {}
 
+function HM.forgetResolvedRole(unit)
+    local name = UnitName(unit)
+    if name then resolvedRoleByName[name] = nil end
+end
+
 local function resolveUnitRole(unit)
-    local role = UnitGroupRolesAssigned(unit)
-    if role == "HEALER" or role == "TANK" or role == "DAMAGER" then
-        return role
-    end
     if UnitIsUnit(unit, "player") then
         local specIdx = GetSpecialization()
         if not specIdx then return nil end
         local ok, _, _, _, _, specRole = pcall(GetSpecializationInfo, specIdx)
         return ok and specRole or nil
     end
+
     local name = UnitName(unit)
     if name and resolvedRoleByName[name] then
         return resolvedRoleByName[name]
     end
+
     local ok, specID = pcall(GetInspectSpecialization, unit)
     if ok and type(specID) == "number" and specID > 0 then
-        local ok2, _, _, _, _, specRole = pcall(GetSpecializationInfoByID, specID)
-        if ok2 and specRole then
+        local roleOk, specRole = pcall(GetSpecializationRoleByID, specID)
+        if roleOk and specRole then
             if name then resolvedRoleByName[name] = specRole end
             return specRole
         end
     end
+
+    local assignedRole = UnitGroupRolesAssigned(unit)
+    if assignedRole == "HEALER" or assignedRole == "TANK" or assignedRole == "DAMAGER" then
+        return assignedRole
+    end
     return nil
+end
+
+local function findUnitByGUID(guid)
+    if not guid then return nil end
+    if UnitGUID("player") == guid then return "player" end
+    if IsInRaid() then
+        for i = 1, GetNumGroupMembers() do
+            local u = "raid" .. i
+            if UnitExists(u) and UnitGUID(u) == guid then return u end
+        end
+    elseif IsInGroup() then
+        for i = 1, GetNumGroupMembers() - 1 do
+            local u = "party" .. i
+            if UnitExists(u) and UnitGUID(u) == guid then return u end
+        end
+    end
+    return nil
+end
+
+function HM.handleInspectReady(guid)
+    local unit = findUnitByGUID(guid)
+    if not unit or UnitIsUnit(unit, "player") then return end
+
+    local ok, specID = pcall(GetInspectSpecialization, unit)
+    if not (ok and type(specID) == "number" and specID > 0) then return end
+
+    local roleOk, specRole = pcall(GetSpecializationRoleByID, specID)
+    if roleOk and specRole then
+        local name = UnitName(unit)
+        if name then resolvedRoleByName[name] = specRole end
+    end
+
+    if healerData[unit] then
+        local iconOk, _, _, _, icon = pcall(GetSpecializationInfoByID, specID)
+        if iconOk and icon then healerData[unit].specIcon = icon end
+    end
 end
 
 function HM.shouldShowForCurrentInstance()
@@ -198,6 +255,7 @@ local function snapshotUnit(unit)
     if not UnitExists(unit) then return nil end
     local name          = UnitName(unit)
     local _, classToken = UnitClass(unit)
+    local regenState, regenIcon = HM.getRegenState(unit)
     return {
         unit       = unit,
         name       = name or "?",
@@ -205,7 +263,8 @@ local function snapshotUnit(unit)
         specIcon   = HM.getSpecIcon(unit, classToken),
         connected  = UnitIsConnected(unit),
         dead       = UnitIsDeadOrGhost(unit),
-        regenState = HM.getRegenState(unit),
+        regenState = regenState,
+        regenIcon  = regenIcon,
     }
 end
 
@@ -233,6 +292,10 @@ end
 
 function HM.rebuildRoster()
     if HM.testModeActive then return end
+    local previousIconsByName = {}
+    for _, d in pairs(healerData) do
+        if d.name and d.specIcon then previousIconsByName[d.name] = d.specIcon end
+    end
     wipe(healerData)
 
     local allUnits = {}
@@ -254,7 +317,11 @@ function HM.rebuildRoster()
         if UnitExists(unit) then
             local role = resolveUnitRole(unit)
             if role == "HEALER" and not (cfg.hideSelf and UnitIsUnit(unit, "player")) then
-                healerData[unit] = snapshotUnit(unit)
+                local snap = snapshotUnit(unit)
+                if not snap.specIcon and previousIconsByName[snap.name] then
+                    snap.specIcon = previousIconsByName[snap.name]
+                end
+                healerData[unit] = snap
             end
             if role ~= "TANK" and role ~= "DAMAGER" and not UnitIsUnit(unit, "player") then
                 local u = unit
@@ -319,11 +386,12 @@ end
 
 function HM.updateUnit(unit)
     if not healerData[unit] then return end
-    local d     = healerData[unit]
-    d.specIcon  = HM.getSpecIcon(unit, d.class)
+    local d = healerData[unit]
+    local newIcon = HM.getSpecIcon(unit, d.class)
+    if newIcon then d.specIcon = newIcon end
     d.connected = UnitIsConnected(unit)
     d.dead      = UnitIsDeadOrGhost(unit)
-    d.regenState = HM.getRegenState(unit)
+    d.regenState, d.regenIcon = HM.getRegenState(unit)
 end
 
 local sortBuf = {}
@@ -337,7 +405,7 @@ function HM.getSorted()
         if cfg.sortMode == "class" and ad.class ~= bd.class then
             return ad.class < bd.class
         end
-        return (ad.name or "") <= (bd.name or "")
+        return (ad.name or "") < (bd.name or "")
     end)
     return sortBuf
 end

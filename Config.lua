@@ -1045,8 +1045,8 @@ local function createConfigFrame()
     local HELP_SECTIONS = {
         {kind = "title", text = "Healer|cff3399FFMana|r"},
         {kind = "body", text = "Tracks the mana of every healer in your group or raid, shown as a row of bars or a strip of icons, positioned and styled however you like."},
-        {kind = "header", text = "Innervate / Eating & Drinking (Work in Progress)"},
-        {kind = "body", text = "In Icon style, a healer's icon is meant to swap to the Innervate or Food & Drink icon while they're regenerating mana that way. This feature is still a work in progress and doesn't work correctly yet."},
+        {kind = "header", text = "Eating & Drinking"},
+        {kind = "body", text = "In Icon style, a healer's icon swaps to their Food & Drink icon while they're regenerating mana that way."},
         {kind = "header", text = "Minimap Icon"},
         {kind = "body", text = "Click the minimap icon to open this settings panel."},
         {kind = "header", text = "Test Preview"},

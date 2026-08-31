@@ -59,6 +59,16 @@ HM.eventFrame = CreateFrame("Frame")
 
 local rosterUpdateQueued = false
 
+local function queueRosterRebuild()
+    if rosterUpdateQueued then return end
+    rosterUpdateQueued = true
+    C_Timer.After(0.5, function()
+        rosterUpdateQueued = false
+        HM.rebuildRoster()
+        HM.refreshDisplay()
+    end)
+end
+
 HM.eventFrame:SetScript("OnEvent", function(self, event, ...)
     if event == "ADDON_LOADED" then
         local addonName = ...
@@ -99,15 +109,16 @@ HM.eventFrame:SetScript("OnEvent", function(self, event, ...)
             HM.refreshDisplay()
         end)
 
-    elseif event == "GROUP_ROSTER_UPDATE" or event == "ROLE_CHANGED_INFORM"
-        or event == "PLAYER_SPECIALIZATION_CHANGED" or event == "INSPECT_READY" then
-        if rosterUpdateQueued then return end
-        rosterUpdateQueued = true
-        C_Timer.After(0.5, function()
-            rosterUpdateQueued = false
-            HM.rebuildRoster()
-            HM.refreshDisplay()
-        end)
+    elseif event == "GROUP_ROSTER_UPDATE" or event == "ROLE_CHANGED_INFORM" then
+        queueRosterRebuild()
+
+    elseif event == "PLAYER_SPECIALIZATION_CHANGED" then
+        HM.forgetResolvedRole(...)
+        queueRosterRebuild()
+
+    elseif event == "INSPECT_READY" then
+        HM.handleInspectReady(...)
+        queueRosterRebuild()
 
     elseif event == "UNIT_POWER_FREQUENT" then
         local unit, powerType = ...

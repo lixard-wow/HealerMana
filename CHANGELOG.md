@@ -4,6 +4,8 @@
 - Fixed sliders in the settings panel getting their handle cut off when dragged all the way to the left or right edge
 - Fixed Holy Priests sometimes showing the Discipline Priest icon instead of their own
 - Fixed other players briefly flashing into the tracker before the addon could tell they weren't actually a healer — it now waits until it's sure before showing anyone
+- Fixed a healer's icon sometimes showing an unrelated class's icon (like a Druid's Bear Form) instead of their own
+- A healer's icon now correctly swaps to show Food & Drink while they're regenerating mana that way
 
 ## 1.0.2
 - Fixed a bug where a dead healer wouldn't show as "Dead" right away, and could get stuck showing "Dead" after being revived

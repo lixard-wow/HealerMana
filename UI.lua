@@ -249,9 +249,7 @@ local function renderBar(bar, data)
 
     if cfg.displayStyle == "bar" then
         local displayName = data.name
-        if data.regenState == "innervate" then
-            displayName = "Innervate"
-        elseif data.regenState == "drinking" then
+        if data.regenState == "drinking" then
             displayName = "Drinking"
         end
         if bar.nameTxt then
@@ -309,11 +307,8 @@ local function renderBar(bar, data)
 
     local iconID = data.specIcon
     local showingRegenIcon = false
-    if data.regenState == "innervate" and HM.innervateIcon then
-        iconID = HM.innervateIcon
-        showingRegenIcon = true
-    elseif data.regenState == "drinking" and HM.foodDrinkIcon then
-        iconID = HM.foodDrinkIcon
+    if data.regenState == "drinking" and data.regenIcon then
+        iconID = data.regenIcon
         showingRegenIcon = true
     end
     if iconID then

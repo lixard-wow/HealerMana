@@ -31,8 +31,10 @@ local function printHelp()
     print("  |cffffff00/hm debug|r   - dump healer roster and mana readings")
     print("  |cffffff00/hm range|r   - diagnose out-of-range detection")
     print("  |cffffff00/hm raid <n>|r - populate n fake healers to test layout (off to restore)")
-    print("  |cffffff00/hm regendebug|r - TEMP: dump Innervate/Food&Drink detection for tracked units")
-    print("  |cffffff00/hm raidregen|r  - TEMP: preview the Innervate/Food&Drink icon swap on fake healers")
+    print("  |cffffff00/hm regendebug|r - TEMP: dump Food&Drink detection for tracked units")
+    print("  |cffffff00/hm specmonitor|r - TEMP: watch live spec/icon detection for other healers every 2s (again to stop)")
+    print("  |cffffff00/hm raidregen|r  - TEMP: preview the Food&Drink icon swap on fake healers")
+    print("  |cffffff00/hm auralog|r    - TEMP: watch player's HELPFUL auras every 2s, saves new ones to HealerManaDB.auraLog (again to stop)")
 end
 
 local function printDebug()
@@ -94,22 +96,87 @@ local function printDebug()
     print("|cff00ccffHealerMana DEBUG|r ---- end")
 end
 
+local specMonitorTicker = nil
+local function toggleSpecMonitor()
+    if specMonitorTicker then
+        specMonitorTicker:Cancel()
+        specMonitorTicker = nil
+        print("|cff00ccffHealerMana|r: spec monitor OFF")
+        return
+    end
+    print("|cff00ccffHealerMana|r: spec monitor ON (TEMP) - sampling every 2s, /hm specmonitor to stop")
+    specMonitorTicker = C_Timer.NewTicker(2, function()
+        for unit, data in pairs(healerData) do
+            if not UnitIsUnit(unit, "player") then
+                local ok, specID = pcall(GetInspectSpecialization, unit)
+                local roleOk, role = false, nil
+                if ok and type(specID) == "number" and specID > 0 then
+                    roleOk, role = pcall(GetSpecializationRoleByID, specID)
+                end
+                print(string.format("  [%s] %s  storedIcon=%s  liveSpecID=%s(ok=%s)  liveRole=%s(ok=%s)",
+                    unit, tostring(UnitName(unit)),
+                    tostring(data.specIcon ~= nil),
+                    tostring(specID), tostring(ok),
+                    tostring(role), tostring(roleOk)))
+            end
+        end
+    end)
+end
+
+local auraLogTicker = nil
+local function toggleAuraLog()
+    if auraLogTicker then
+        auraLogTicker:Cancel()
+        auraLogTicker = nil
+        print("|cff00ccffHealerMana|r: aura log OFF - entries saved in HealerManaDB.auraLog (survives /reload, read after logout/reload from the SavedVariables file)")
+        return
+    end
+    HealerManaDB.auraLog = HealerManaDB.auraLog or {}
+    print("|cff00ccffHealerMana|r: aura log ON (TEMP) - go eat/drink now, new auras are saved to HealerManaDB.auraLog. /hm auralog to stop")
+    auraLogTicker = C_Timer.NewTicker(2, function()
+        local ok, auras = pcall(C_UnitAuras.GetUnitAuras, "player", "HELPFUL")
+        if not ok or type(auras) ~= "table" then
+            print("  aura log: GetUnitAuras failed - " .. tostring(auras))
+            return
+        end
+        local now = date("%H:%M:%S")
+        for _, aura in ipairs(auras) do
+            local key = tostring(aura.spellId)
+            local entry = HealerManaDB.auraLog[key]
+            if not entry then
+                entry = {name = aura.name, spellId = aura.spellId, duration = aura.duration, firstSeen = now}
+                HealerManaDB.auraLog[key] = entry
+                print(string.format("|cff00ccffHealerMana|r aura log: NEW  %s  spellId=%s  duration=%s",
+                    tostring(aura.name), tostring(aura.spellId), tostring(aura.duration)))
+            end
+            entry.lastSeen = now
+        end
+    end)
+end
+
 local function printRegenDebug()
     print("|cff00ccffHealerMana|r: regen debug (TEMP command, remove after verifying) ---")
     local checked = 0
     local function reportUnit(unit)
         checked = checked + 1
-        local ok1, innervate = pcall(C_UnitAuras.GetUnitAuraBySpellID, unit, HM.INNERVATE_SPELL_ID)
+        local idResults = {}
+        for _, spellID in ipairs(HM.FOOD_DRINK_SPELL_IDS) do
+            local ok, aura = pcall(C_UnitAuras.GetUnitAuraBySpellID, unit, spellID)
+            local secret = ok and type(aura) == "table" and HM.isSecretTable and HM.isSecretTable(aura)
+            idResults[#idResults + 1] = string.format("%s(ok=%s,type=%s,secret=%s)", spellID, tostring(ok), tostring(type(aura)), tostring(secret))
+        end
         local nameResults = {}
         for _, name in ipairs(HM.FOOD_DRINK_NAMES) do
             local ok, aura = pcall(C_UnitAuras.GetAuraDataBySpellName, unit, name, "HELPFUL")
-            nameResults[#nameResults + 1] = string.format("%s(ok=%s,type=%s)", name, tostring(ok), tostring(type(aura)))
+            local secret = ok and type(aura) == "table" and HM.isSecretTable and HM.isSecretTable(aura)
+            nameResults[#nameResults + 1] = string.format("%s(ok=%s,type=%s,secret=%s)", name, tostring(ok), tostring(type(aura)), tostring(secret))
         end
         local storedRegen = healerData[unit] and healerData[unit].regenState
         local storedDead  = healerData[unit] and healerData[unit].dead
-        print(string.format("  [%s] %s  innervateOk=%s type=%s",
-            unit, tostring(UnitName(unit)), tostring(ok1), tostring(type(innervate))))
-        print("    names: " .. table.concat(nameResults, " "))
+        print(string.format("  [%s] %s  inCombat=%s",
+            unit, tostring(UnitName(unit)), tostring(InCombatLockdown())))
+        print("    food/drink spellIDs: " .. table.concat(idResults, " "))
+        print("    food/drink names: " .. table.concat(nameResults, " "))
         print(string.format("    liveRegenState=%s  storedRegenState=%s  liveDead=%s  storedDead=%s",
             tostring(HM.getRegenState(unit)), tostring(storedRegen),
             tostring(UnitIsDeadOrGhost(unit)), tostring(storedDead)))
@@ -185,13 +252,21 @@ function HM.setupSlash()
         elseif cmd == "regendebug" then
             printRegenDebug()
 
+        elseif cmd == "specmonitor" then
+            toggleSpecMonitor()
+
+        elseif cmd == "auralog" then
+            toggleAuraLog()
+
         elseif cmd == "raidregen" then
             HM.testModeActive = true
             HM.generateTestRoster(3)
-            if healerData["test1"] then healerData["test1"].regenState = "innervate" end
-            if healerData["test2"] then healerData["test2"].regenState = "drinking" end
+            if healerData["test2"] then
+                healerData["test2"].regenState = "drinking"
+                healerData["test2"].regenIcon = C_Spell.GetSpellTexture(HM.DRINK_SPELL_ID)
+            end
             print("|cff00ccffHealerMana|r: regen preview ON (TEMP command) - " ..
-                  "test1=Innervate icon, test2=Food & Drink icon, test3=normal. /hm raid off to restore.")
+                  "test2=Food & Drink icon, test1/test3=normal. /hm raid off to restore.")
             HM.refreshDisplay()
 
         elseif cmd == "range" then
