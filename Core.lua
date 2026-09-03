@@ -60,6 +60,27 @@ function HM.getRegenState(unit)
     return nil
 end
 
+HM.CAT_FORM_SPELL_ID     = 768
+HM.BEAR_FORM_SPELL_ID    = 5487
+HM.MOONKIN_FORM_SPELL_ID = 24858
+HM.CAT_FORM_ICON      = C_Spell.GetSpellTexture(HM.CAT_FORM_SPELL_ID)
+HM.BEAR_FORM_ICON     = C_Spell.GetSpellTexture(HM.BEAR_FORM_SPELL_ID)
+HM.MOONKIN_FORM_ICON  = C_Spell.GetSpellTexture(HM.MOONKIN_FORM_SPELL_ID)
+
+HM.FORM_ICON = {
+    CAT     = HM.CAT_FORM_ICON,
+    BEAR    = HM.BEAR_FORM_ICON,
+    MOONKIN = HM.MOONKIN_FORM_ICON,
+}
+
+function HM.getDruidForm(unit, classToken)
+    if classToken ~= "DRUID" or not UnitExists(unit) then return nil end
+    if auraDataBySpellID(unit, HM.CAT_FORM_SPELL_ID) then return "CAT" end
+    if auraDataBySpellID(unit, HM.BEAR_FORM_SPELL_ID) then return "BEAR" end
+    if auraDataBySpellID(unit, HM.MOONKIN_FORM_SPELL_ID) then return "MOONKIN" end
+    return nil
+end
+
 local RANGE_SPELLS_BY_CLASS = {
     DRUID       = {8936,   774,    5185  },
     PALADIN     = {19750,  635,    85673 },
@@ -222,6 +243,8 @@ local HEALER_SPEC_ID = {
 }
 
 local classSpecIcon = {}
+HM.GENERIC_CLASS_ICON_TEXTURE = "Interface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES"
+
 function HM.buildSpecIcons()
     wipe(classSpecIcon)
     for class, specIDs in pairs(HEALER_SPEC_ID) do
@@ -230,6 +253,8 @@ function HM.buildSpecIcons()
             if ok and icon then
                 classSpecIcon[class] = icon
             end
+        elseif CLASS_ICON_TCOORDS and CLASS_ICON_TCOORDS[class] then
+            classSpecIcon[class] = {texture = HM.GENERIC_CLASS_ICON_TEXTURE, coords = CLASS_ICON_TCOORDS[class]}
         end
     end
 end
@@ -265,18 +290,27 @@ local function snapshotUnit(unit)
         dead       = UnitIsDeadOrGhost(unit),
         regenState = regenState,
         regenIcon  = regenIcon,
+        form       = HM.getDruidForm(unit, classToken),
     }
 end
 
 local TEST_CLASSES = {"DRUID", "PALADIN", "PRIEST", "SHAMAN", "MONK", "EVOKER"}
+local TEST_DRUID_FORMS = {"CAT", "BEAR", "MOONKIN", nil}
 local testClassIcon = {}
+local testDruidIndex = 0
 function HM.generateTestRoster(n)
     wipe(healerData)
+    testDruidIndex = 0
     for i = 1, n do
         local class = TEST_CLASSES[((i - 1) % #TEST_CLASSES) + 1]
         if testClassIcon[class] == nil then
             local ok, _, _, _, icon = pcall(GetSpecializationInfoByID, HEALER_SPEC_ID[class][1])
             testClassIcon[class] = (ok and icon) or false
+        end
+        local form
+        if class == "DRUID" then
+            testDruidIndex = testDruidIndex + 1
+            form = TEST_DRUID_FORMS[((testDruidIndex - 1) % #TEST_DRUID_FORMS) + 1]
         end
         healerData["test" .. i] = {
             unit      = "player",
@@ -285,9 +319,42 @@ function HM.generateTestRoster(n)
             specIcon  = testClassIcon[class] or nil,
             connected = true,
             dead      = false,
+            form      = form,
             testPct   = (n > 1) and (5 + (i - 1) * 90 / (n - 1)) or 50,
         }
     end
+end
+
+local inspectQueue = {}
+local inspectQueued = {}
+local inspectTicker = nil
+
+function HM.enqueueInspect(unit, priority)
+    if inspectQueued[unit] then
+        if priority then
+            for i, u in ipairs(inspectQueue) do
+                if u == unit then
+                    table.remove(inspectQueue, i)
+                    table.insert(inspectQueue, 1, unit)
+                    break
+                end
+            end
+        end
+        return
+    end
+    inspectQueued[unit] = true
+    if priority then
+        table.insert(inspectQueue, 1, unit)
+    else
+        inspectQueue[#inspectQueue + 1] = unit
+    end
+    if inspectTicker then return end
+    inspectTicker = C_Timer.NewTicker(1.7, function()
+        local u = table.remove(inspectQueue, 1)
+        if not u then return end
+        inspectQueued[u] = nil
+        if UnitExists(u) then NotifyInspect(u) end
+    end)
 end
 
 function HM.rebuildRoster()
@@ -312,23 +379,19 @@ function HM.rebuildRoster()
         allUnits[#allUnits + 1] = "player"
     end
 
-    local delay = 0.2
     for _, unit in ipairs(allUnits) do
         if UnitExists(unit) then
             local role = resolveUnitRole(unit)
+            local snap
             if role == "HEALER" and not (cfg.hideSelf and UnitIsUnit(unit, "player")) then
-                local snap = snapshotUnit(unit)
+                snap = snapshotUnit(unit)
                 if not snap.specIcon and previousIconsByName[snap.name] then
                     snap.specIcon = previousIconsByName[snap.name]
                 end
                 healerData[unit] = snap
             end
             if role ~= "TANK" and role ~= "DAMAGER" and not UnitIsUnit(unit, "player") then
-                local u = unit
-                C_Timer.After(delay, function()
-                    if UnitExists(u) then NotifyInspect(u) end
-                end)
-                delay = delay + 0.5
+                HM.enqueueInspect(unit, role == "HEALER" and snap and not snap.specIcon)
             end
         end
     end
@@ -365,7 +428,7 @@ end
 function HM.retryUnresolvedIcons()
     for unit, data in pairs(healerData) do
         if not data.specIcon and not UnitIsUnit(unit, "player") and UnitExists(unit) then
-            NotifyInspect(unit)
+            HM.enqueueInspect(unit, true)
         end
     end
 end
@@ -392,6 +455,7 @@ function HM.updateUnit(unit)
     d.connected = UnitIsConnected(unit)
     d.dead      = UnitIsDeadOrGhost(unit)
     d.regenState, d.regenIcon = HM.getRegenState(unit)
+    d.form      = HM.getDruidForm(unit, d.class)
 end
 
 local sortBuf = {}

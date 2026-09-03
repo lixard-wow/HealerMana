@@ -59,6 +59,9 @@ local function truncateTextToFit(fs, text, maxW)
     if #truncated == 0 then fs:SetText("…") end
 end
 
+local FORM_LABEL = {CAT = "Cat", BEAR = "Bear", MOONKIN = "Moonkin"}
+local FORM_COLOR = {CAT = {1.00, 0.65, 0.00}, BEAR = {0.70, 0.40, 0.15}, MOONKIN = {0.60, 0.40, 0.90}}
+
 local CLASS_COLOR = {
     DRUID   = {1.000, 0.490, 0.039},
     PALADIN = {0.961, 0.549, 0.729},
@@ -251,6 +254,8 @@ local function renderBar(bar, data)
         local displayName = data.name
         if data.regenState == "drinking" then
             displayName = "Drinking"
+        elseif data.form then
+            displayName = "[" .. FORM_LABEL[data.form] .. "] " .. data.name
         end
         if bar.nameTxt then
             if bar.nameTxt._lastName ~= displayName then
@@ -266,24 +271,27 @@ local function renderBar(bar, data)
             end
         end
         local cc = CLASS_COLOR[data.class]
-        if data.dead then
-            bar.fill:SetStatusBarColor(0.4, 0.4, 0.4, cfg.barFillOpacity)
-            bar.fill:SetValue(100)
-            bar.pctTxt:SetText("Dead")
-            bar.pctTxt:SetTextColor(0.9, 0.3, 0.3)
-            if bar.nameTxt then bar.nameTxt:SetTextColor(0.6, 0.6, 0.6) end
-        elseif not data.connected then
+        if not data.connected then
             bar.fill:SetStatusBarColor(0.4, 0.4, 0.4, cfg.barFillOpacity)
             bar.fill:SetValue(100)
             bar.pctTxt:SetText("Offline")
             bar.pctTxt:SetTextColor(0.6, 0.6, 0.6)
+            if bar.nameTxt then bar.nameTxt:SetTextColor(0.6, 0.6, 0.6) end
+        elseif data.dead then
+            bar.fill:SetStatusBarColor(0.4, 0.4, 0.4, cfg.barFillOpacity)
+            bar.fill:SetValue(100)
+            bar.pctTxt:SetText("Dead")
+            bar.pctTxt:SetTextColor(0.9, 0.3, 0.3)
             if bar.nameTxt then bar.nameTxt:SetTextColor(0.6, 0.6, 0.6) end
         else
             local pct = data.testPct or HM.readUnitPctRaw(data.unit)
             local fr, fg, fb = getFillColor(data)
             bar.fill:SetStatusBarColor(fr, fg, fb, cfg.barFillOpacity)
             if bar.nameTxt then
-                if cc and cfg.nameClassColor then
+                if data.form then
+                    local fc = FORM_COLOR[data.form]
+                    bar.nameTxt:SetTextColor(fc[1], fc[2], fc[3])
+                elseif cc and cfg.nameClassColor then
                     bar.nameTxt:SetTextColor(cc[1], cc[2], cc[3])
                 else
                     local nc = cfg.nameCustomColor
@@ -306,12 +314,18 @@ local function renderBar(bar, data)
     end
 
     local iconID = data.specIcon
-    local showingRegenIcon = false
+    local showingOverrideIcon = false
     if data.regenState == "drinking" and data.regenIcon then
         iconID = data.regenIcon
-        showingRegenIcon = true
+        showingOverrideIcon = true
+    elseif data.form and HM.FORM_ICON[data.form] then
+        iconID = HM.FORM_ICON[data.form]
+        showingOverrideIcon = true
     end
-    if iconID then
+    if type(iconID) == "table" then
+        bar.icon:SetTexture(iconID.texture)
+        bar.icon:SetTexCoord(unpack(iconID.coords))
+    elseif iconID then
         bar.icon:SetTexture(iconID)
         bar.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
     else
@@ -344,18 +358,18 @@ local function renderBar(bar, data)
         bar.border:SetBackdropBorderColor(bc.r, bc.g, bc.b, 1)
     end
 
-    if data.dead then
-        bar.pctTxt:SetText("Dead")
-        bar.pctTxt:SetTextColor(0.9, 0.3, 0.3)
-        bar.icon:SetAlpha(0.4)
-        bar.tint:SetColorTexture(0.4, 0.4, 0.4)
-        bar.tint:SetAlpha(showingRegenIcon and 0 or cfg.iconTintOpacity)
-    elseif not data.connected then
+    if not data.connected then
         bar.pctTxt:SetText("Offline")
         bar.pctTxt:SetTextColor(0.6, 0.6, 0.6)
         bar.icon:SetAlpha(0.4)
         bar.tint:SetColorTexture(0.4, 0.4, 0.4)
-        bar.tint:SetAlpha(showingRegenIcon and 0 or cfg.iconTintOpacity)
+        bar.tint:SetAlpha(showingOverrideIcon and 0 or cfg.iconTintOpacity)
+    elseif data.dead then
+        bar.pctTxt:SetText("Dead")
+        bar.pctTxt:SetTextColor(0.9, 0.3, 0.3)
+        bar.icon:SetAlpha(0.4)
+        bar.tint:SetColorTexture(0.4, 0.4, 0.4)
+        bar.tint:SetAlpha(showingOverrideIcon and 0 or cfg.iconTintOpacity)
     else
         bar.icon:SetAlpha(1)
         if cc and cfg.pctClassColor then
@@ -370,7 +384,7 @@ local function renderBar(bar, data)
 
         setPctText(bar.pctTxt, pct)
         bar.tint:SetColorTexture(fr, fg, fb)
-        bar.tint:SetAlpha(showingRegenIcon and 0 or cfg.iconTintOpacity)
+        bar.tint:SetAlpha(showingOverrideIcon and 0 or cfg.iconTintOpacity)
     end
 
     bar:Show()

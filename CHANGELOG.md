@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+- Added a Druid shapeshift-form indicator: while a healer Druid is in Cat, Bear, or Moonkin Form, their icon shows the actual Feral/Guardian/Balance icon (Icon style) or a colored [Cat]/[Bear]/[Moonkin] tag next to their name (Bar style), making it clear at a glance they're not actively healing (currently only confirmed working outside of combat)
+- Fixed: a healer who is both dead and disconnected now shows "Offline" instead of "Dead", since being offline is the more important thing to notice
+- Priest healers' icons now show up faster, and show a generic class icon instead of a blank space while their exact spec is still resolving
+
 ## 1.0.3
 - Fixed sliders in the settings panel getting their handle cut off when dragged all the way to the left or right edge
 - Fixed Holy Priests sometimes showing the Discipline Priest icon instead of their own

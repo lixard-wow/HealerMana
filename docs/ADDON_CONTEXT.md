@@ -10,7 +10,8 @@
 - Mana % display via UnitPowerPercent with full WoW 12.0 secret-value handling
 - Out-of-range dimming via C_Spell.IsSpellInRange / UnitInRange / SetAlphaFromBoolean
 - Class-colored borders and name labels per healer
-- Spec icon from GetInspectSpecialization / GetSpecializationInfo with class fallback
+- Spec icon from GetInspectSpecialization / GetSpecializationInfo with class fallback; Priest (the only class with two Healer-role specs) shows a generic class-icon placeholder while resolving instead of blank or a guess
+- Druid shapeshift-form indicator — while a healer Druid is in Cat, Bear, or Moonkin Form, Icon style replaces their spec icon outright with the Feral/Guardian/Balance spell icon; Bar style prefixes their name with a colored `[Cat]`/`[Bear]`/`[Moonkin]` tag. Confirmed working out of combat; confirmed NOT working during real combat (aura secrecy, same class of limitation as Innervate — see docs/TODO.md)
 - Configurable: cell size, spacing, layout, font sizes, sort order, lock, name/% symbol visibility
 - Minimap icon (LibDBIcon-1.0 + LibDataBroker-1.1) — left-click opens settings, right-click toggles a 5-healer test preview, tooltip explains the addon
 

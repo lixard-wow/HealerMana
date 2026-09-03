@@ -32,6 +32,7 @@ local function printHelp()
     print("  |cffffff00/hm range|r   - diagnose out-of-range detection")
     print("  |cffffff00/hm raid <n>|r - populate n fake healers to test layout (off to restore)")
     print("  |cffffff00/hm regendebug|r - TEMP: dump Food&Drink detection for tracked units")
+    print("  |cffffff00/hm formdebug|r  - TEMP: dump Cat/Bear/Moonkin Form aura-secrecy detection for Druids")
     print("  |cffffff00/hm specmonitor|r - TEMP: watch live spec/icon detection for other healers every 2s (again to stop)")
     print("  |cffffff00/hm raidregen|r  - TEMP: preview the Food&Drink icon swap on fake healers")
     print("  |cffffff00/hm auralog|r    - TEMP: watch player's HELPFUL auras every 2s, saves new ones to HealerManaDB.auraLog (again to stop)")
@@ -154,6 +155,47 @@ local function toggleAuraLog()
     end)
 end
 
+local function printFormDebug()
+    print("|cff00ccffHealerMana|r: form debug (TEMP command, remove after verifying) ---")
+    local checked = 0
+    local function reportUnit(unit)
+        local _, classToken = UnitClass(unit)
+        if classToken ~= "DRUID" then return end
+        checked = checked + 1
+        local formSpells = {CAT = HM.CAT_FORM_SPELL_ID, BEAR = HM.BEAR_FORM_SPELL_ID, MOONKIN = HM.MOONKIN_FORM_SPELL_ID}
+        local results = {}
+        for label, spellID in pairs(formSpells) do
+            local ok, aura = pcall(C_UnitAuras.GetUnitAuraBySpellID, unit, spellID)
+            local secret = ok and type(aura) == "table" and HM.isSecretTable and HM.isSecretTable(aura)
+            results[#results + 1] = string.format("%s=%s(ok=%s,type=%s,secret=%s)", label, spellID, tostring(ok), tostring(type(aura)), tostring(secret))
+        end
+        local storedForm = healerData[unit] and healerData[unit].form
+        print(string.format("  [%s] %s  inCombat=%s", unit, tostring(UnitName(unit)), tostring(InCombatLockdown())))
+        print("    " .. table.concat(results, " "))
+        print(string.format("    liveForm=%s  storedForm=%s", tostring(HM.getDruidForm(unit, classToken)), tostring(storedForm)))
+
+        local powerType, powerToken = UnitPowerType(unit)
+        local mOk, mPct = pcall(UnitPowerPercent, unit, MANA)
+        local mSecret = mOk and _isSecret and _isSecret(mPct)
+        local mKind = (not mOk and "err") or (mPct == nil and "nil") or (mSecret and "secret") or type(mPct)
+        print(string.format("    UnitPowerType=%s(%s)  UnitPowerPercent(MANA)=%s%s",
+            tostring(powerType), tostring(powerToken), mKind,
+            (mKind == "number") and ("(value=" .. tostring(mPct) .. ")") or ""))
+    end
+    for unit in pairs(healerData) do reportUnit(unit) end
+    if checked == 0 then
+        print("  (no tracked Druid healers - scanning group units instead)")
+        forEachGroupUnit(reportUnit)
+        if not IsInRaid() and not IsInGroup() and UnitExists("player") then
+            reportUnit("player")
+        end
+    end
+    if checked == 0 then
+        print("  (no Druids found to check)")
+    end
+    print("|cff00ccffHealerMana|r: --- end form debug")
+end
+
 local function printRegenDebug()
     print("|cff00ccffHealerMana|r: regen debug (TEMP command, remove after verifying) ---")
     local checked = 0
@@ -251,6 +293,9 @@ function HM.setupSlash()
 
         elseif cmd == "regendebug" then
             printRegenDebug()
+
+        elseif cmd == "formdebug" then
+            printFormDebug()
 
         elseif cmd == "specmonitor" then
             toggleSpecMonitor()

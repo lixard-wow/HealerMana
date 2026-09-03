@@ -95,7 +95,7 @@ HM.eventFrame:SetScript("OnEvent", function(self, event, ...)
             end
             HM.refreshDisplay()
         end)
-        C_Timer.NewTicker(3, function()
+        C_Timer.NewTicker(1, function()
             if next(HM.healerData) and not HM.testModeActive then
                 HM.retryUnresolvedIcons()
             end
