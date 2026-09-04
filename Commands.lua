@@ -215,8 +215,9 @@ local function printRegenDebug()
         end
         local storedRegen = healerData[unit] and healerData[unit].regenState
         local storedDead  = healerData[unit] and healerData[unit].dead
-        print(string.format("  [%s] %s  inCombat=%s",
-            unit, tostring(UnitName(unit)), tostring(InCombatLockdown())))
+        print(string.format("  [%s] %s  inCombat=%s  mythicPlusActive=%s",
+            unit, tostring(UnitName(unit)), tostring(InCombatLockdown()),
+            tostring(C_ChallengeMode and C_ChallengeMode.IsChallengeModeActive and C_ChallengeMode.IsChallengeModeActive())))
         print("    food/drink spellIDs: " .. table.concat(idResults, " "))
         print("    food/drink names: " .. table.concat(nameResults, " "))
         print(string.format("    liveRegenState=%s  storedRegenState=%s  liveDead=%s  storedDead=%s",

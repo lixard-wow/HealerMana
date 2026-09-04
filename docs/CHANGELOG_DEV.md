@@ -10,6 +10,11 @@
   - Notes:
 
 ### Entries
+- PROMPT 75
+  - Intent: User reported Food & Drink detection works in raid (out of combat) but never in Mythic+ keys, and asked whether it's blocked there.
+  - Files changed: Commands.lua, docs/ADDON_CONTEXT.md
+  - Result: Confirmed via Warcraft Wiki's Patch 12.0.0 planned API changes (the same page already used for the Innervate/Druid-form combat-secrecy research) that aura access shares the same restriction rules as cooldown access: secret whenever ANY of — a mythic keystone run has started and not yet completed, a PvP match is active, an encounter is in progress, or the player is in combat — is true. A raid only trips this during an actual encounter/combat, so Food & Drink works fine in downtime between raid pulls; a Mythic+ run trips it continuously for the ENTIRE key from start to finish, independent of moment-to-moment combat, which is exactly the reported symptom. Unlike Cat/Bear Form (which had a non-aura UnitPowerType escape hatch), there's no equivalent workaround for Food & Drink — no non-aura signal exists for "is this unit eating/drinking" — so this is logged as a confirmed, permanent limitation rather than something to keep chasing. Added `mythicPlusActive=` (via C_ChallengeMode.IsChallengeModeActive) to `/hm regendebug`'s output alongside the existing `inCombat=`, so this can be visually confirmed on demand in the future.
+  - Notes: No code fix possible or attempted — this is a hard Blizzard-side restriction, confirmed by documentation and by the user's own consistent live observation (raid works, keys never do). Ran luacheck — 0 new warnings (C_ChallengeMode already in the curated globals list).
 - PROMPT 74
   - Intent: User pointed out that Cat/Bear Form don't use Mana as their active resource, so the mana % readout doesn't make sense to show while shapeshifted into either.
   - Files changed: UI.lua, docs/ADDON_CONTEXT.md

@@ -63,7 +63,7 @@ Also reachable without typing: minimap icon left-click (settings) / right-click 
 - External libraries: LibStub, LibDataBroker-1.1, LibDBIcon-1.0 only (embedded in Libs/, explicitly approved for the minimap icon) — no others without explicit approval
 
 ## Known Issues
-- None logged
+- Food & Drink icon-swap detection (and any other aura-based detection: Druid Moonkin Form) does not work anywhere inside an active Mythic+ run, even out of combat between pulls — confirmed via Blizzard's own documented aura-secrecy rule: aura/cooldown data is secret whenever "a mythic keystone run has started and not yet completed" is true, independent of actual combat state. A raid only trips this during an actual encounter/combat, so it works fine between raid pulls; a key trips it for the entire run. No workaround exists for this one (unlike Cat/Bear Form, which has a non-aura UnitPowerType signal) — confirmed as a hard Blizzard-side wall, not an addon bug. `/hm regendebug` now also prints `mythicPlusActive=` (via C_ChallengeMode.IsChallengeModeActive) alongside `inCombat=` to make this visible on demand.
 
 ## Current Focus
 - Session initialization; no active task
