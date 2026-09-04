@@ -1,9 +1,11 @@
 # Changelog
 
 ## Unreleased
-- Added a Druid shapeshift-form indicator: while a healer Druid is in Cat, Bear, or Moonkin Form, their icon shows the actual Feral/Guardian/Balance icon (Icon style) or a colored [Cat]/[Bear]/[Moonkin] tag next to their name (Bar style), making it clear at a glance they're not actively healing (currently only confirmed working outside of combat)
+- Added a Druid shapeshift-form indicator: while a healer Druid is in Cat, Bear, or Moonkin Form, their icon shows the actual Feral/Guardian/Balance icon (Icon style) or a colored [Cat]/[Bear]/[Moonkin] tag next to their name (Bar style), making it clear at a glance they're not actively healing. Cat and Bear Form now update correctly even during combat; Moonkin Form only updates outside of combat
+- Mana % is now hidden while a Druid is in Cat or Bear Form, since neither uses mana as their active resource
 - Fixed: a healer who is both dead and disconnected now shows "Offline" instead of "Dead", since being offline is the more important thing to notice
-- Priest healers' icons now show up faster, and show a generic class icon instead of a blank space while their exact spec is still resolving
+- Priest healers' icons now show up faster, show a generic class icon instead of a blank space while their exact spec is still resolving, and no longer flicker back and forth once resolved
+- Confirmed: Food & Drink detection cannot work at all inside an active Mythic+ run (the whole run, not just active pulls) — this is a Blizzard restriction with no workaround, not a bug
 
 ## 1.0.3
 - Fixed sliders in the settings panel getting their handle cut off when dragged all the way to the left or right edge
