@@ -61,6 +61,7 @@ end
 
 local FORM_LABEL = {CAT = "Cat", BEAR = "Bear", MOONKIN = "Moonkin"}
 local FORM_COLOR = {CAT = {1.00, 0.65, 0.00}, BEAR = {0.70, 0.40, 0.15}, MOONKIN = {0.60, 0.40, 0.90}}
+local NO_MANA_FORMS = {CAT = true, BEAR = true}
 
 local CLASS_COLOR = {
     DRUID   = {1.000, 0.490, 0.039},
@@ -301,7 +302,11 @@ local function renderBar(bar, data)
 
             bar.fill:SetValue(pct or 0)
 
-            setPctText(bar.pctTxt, pct)
+            if NO_MANA_FORMS[data.form] then
+                bar.pctTxt:SetText("")
+            else
+                setPctText(bar.pctTxt, pct)
+            end
             if cc and cfg.pctClassColor then
                 bar.pctTxt:SetTextColor(cc[1], cc[2], cc[3])
             else
@@ -382,7 +387,11 @@ local function renderBar(bar, data)
         local pct = data.testPct or HM.readUnitPctRaw(data.unit)
         local fr, fg, fb = getFillColor(data)
 
-        setPctText(bar.pctTxt, pct)
+        if NO_MANA_FORMS[data.form] then
+            bar.pctTxt:SetText("")
+        else
+            setPctText(bar.pctTxt, pct)
+        end
         bar.tint:SetColorTexture(fr, fg, fb)
         bar.tint:SetAlpha(showingOverrideIcon and 0 or cfg.iconTintOpacity)
     end

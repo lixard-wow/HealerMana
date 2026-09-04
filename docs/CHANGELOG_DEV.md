@@ -10,6 +10,11 @@
   - Notes:
 
 ### Entries
+- PROMPT 74
+  - Intent: User pointed out that Cat/Bear Form don't use Mana as their active resource, so the mana % readout doesn't make sense to show while shapeshifted into either.
+  - Files changed: UI.lua, docs/ADDON_CONTEXT.md
+  - Result: Added a small NO_MANA_FORMS = {CAT = true, BEAR = true} lookup; both display styles' renderBar now blank bar.pctTxt instead of calling setPctText when data.form is Cat or Bear. Moonkin Form deliberately excluded — it still uses Mana as its real resource (same as normal Resto/Balance), so its % keeps showing. Scoped to just the percent text per the request; the bar fill/tint visuals are untouched.
+  - Notes: Not yet verified in-game. Ran luacheck — 0 new warnings.
 - PROMPT 73
   - Intent: Live combat testing (user-provided `/hm formdebug` logs across several pulls) confirmed Cat/Bear/Moonkin Form aura detection works out of combat but is silently blind during real combat (a Druid demonstrably in Bear Form via UnitPowerType=RAGE still returned a clean "not found" on the Bear Form aura check, not secret-blocked, just empty). User asked whether the icon could instead be driven off the Rage/Energy power bar.
   - Files changed: Core.lua, docs/ADDON_CONTEXT.md, docs/TODO.md
