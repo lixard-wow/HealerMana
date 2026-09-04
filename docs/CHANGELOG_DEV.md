@@ -10,6 +10,11 @@
   - Notes:
 
 ### Entries
+- PROMPT 73
+  - Intent: Live combat testing (user-provided `/hm formdebug` logs across several pulls) confirmed Cat/Bear/Moonkin Form aura detection works out of combat but is silently blind during real combat (a Druid demonstrably in Bear Form via UnitPowerType=RAGE still returned a clean "not found" on the Bear Form aura check, not secret-blocked, just empty). User asked whether the icon could instead be driven off the Rage/Energy power bar.
+  - Files changed: Core.lua, docs/ADDON_CONTEXT.md, docs/TODO.md
+  - Result: The user's own test data already answered this — UnitPowerType(unit) came back as a clean, non-secret value in every single test this session (MANA/ENERGY/RAGE), including the exact in-combat moment the aura check failed, since power type (which bar to show) isn't part of the same secrecy restriction as aura/value reads. Since Cat Form uniquely uses Energy and Bear Form uniquely uses Rage among Druid states, this is a reliable, combat-safe signal backed by real evidence, not a guess. HM.getDruidForm now checks UnitPowerType's power token first for CAT ("ENERGY") and BEAR ("RAGE"); Moonkin Form still uses Mana (same as normal Resto/Balance) so it can't be told apart this way and keeps the old aura-based check as a fallback — still out-of-combat-only, but Moonkin wasn't the original ask, Cat/Bear were.
+  - Notes: Not yet re-verified in-game specifically for the in-combat case with this new detection method (the prior in-combat test that exposed the bug used the old aura-only code) — next in-combat `/hm formdebug` or visual check should confirm Cat/Bear now update correctly mid-fight. Ran luacheck — 0 new warnings.
 - PROMPT 72
   - Intent: User reported live regression right after the generic Priest class-icon fallback (PROMPT 71) shipped — Priest icons flip-flopping between the generic placeholder and their real Disc/Holy icon repeatedly.
   - Files changed: Core.lua

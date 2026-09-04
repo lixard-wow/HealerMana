@@ -75,8 +75,9 @@ HM.FORM_ICON = {
 
 function HM.getDruidForm(unit, classToken)
     if classToken ~= "DRUID" or not UnitExists(unit) then return nil end
-    if auraDataBySpellID(unit, HM.CAT_FORM_SPELL_ID) then return "CAT" end
-    if auraDataBySpellID(unit, HM.BEAR_FORM_SPELL_ID) then return "BEAR" end
+    local _, powerToken = UnitPowerType(unit)
+    if powerToken == "ENERGY" then return "CAT" end
+    if powerToken == "RAGE" then return "BEAR" end
     if auraDataBySpellID(unit, HM.MOONKIN_FORM_SPELL_ID) then return "MOONKIN" end
     return nil
 end
