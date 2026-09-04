@@ -361,7 +361,7 @@ function HM.rebuildRoster()
     if HM.testModeActive then return end
     local previousIconsByName = {}
     for _, d in pairs(healerData) do
-        if d.name and d.specIcon then previousIconsByName[d.name] = d.specIcon end
+        if d.name and type(d.specIcon) == "number" then previousIconsByName[d.name] = d.specIcon end
     end
     wipe(healerData)
 
@@ -385,13 +385,13 @@ function HM.rebuildRoster()
             local snap
             if role == "HEALER" and not (cfg.hideSelf and UnitIsUnit(unit, "player")) then
                 snap = snapshotUnit(unit)
-                if not snap.specIcon and previousIconsByName[snap.name] then
+                if type(snap.specIcon) ~= "number" and previousIconsByName[snap.name] then
                     snap.specIcon = previousIconsByName[snap.name]
                 end
                 healerData[unit] = snap
             end
             if role ~= "TANK" and role ~= "DAMAGER" and not UnitIsUnit(unit, "player") then
-                HM.enqueueInspect(unit, role == "HEALER" and snap and not snap.specIcon)
+                HM.enqueueInspect(unit, role == "HEALER" and snap and type(snap.specIcon) ~= "number")
             end
         end
     end
@@ -451,7 +451,9 @@ function HM.updateUnit(unit)
     if not healerData[unit] then return end
     local d = healerData[unit]
     local newIcon = HM.getSpecIcon(unit, d.class)
-    if newIcon then d.specIcon = newIcon end
+    if type(newIcon) == "number" or type(d.specIcon) ~= "number" then
+        if newIcon then d.specIcon = newIcon end
+    end
     d.connected = UnitIsConnected(unit)
     d.dead      = UnitIsDeadOrGhost(unit)
     d.regenState, d.regenIcon = HM.getRegenState(unit)
