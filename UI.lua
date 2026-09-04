@@ -153,6 +153,7 @@ local function createBar(idx)
     bar.pctTxt:SetPoint("TOPLEFT", bar, "TOPLEFT", 0, -(cs / 2 - pctFs / 2))
     bar.pctTxt:SetWidth(cs)
     bar.pctTxt:SetJustifyH("CENTER")
+    bar.pctTxt:SetWordWrap(false)
 
     if cfg.showName then
         local nameFs = effectiveNameFontSize(cfg.nameFontSize)
@@ -363,14 +364,19 @@ local function renderBar(bar, data)
         bar.border:SetBackdropBorderColor(bc.r, bc.g, bc.b, 1)
     end
 
+    local pctFs = effectivePctFontSize(cfg.pctFontSize)
+    bar.pctTxt:SetFont(HM.getFontPath(), pctFs, "OUTLINE")
+
     if not data.connected then
         bar.pctTxt:SetText("Offline")
+        shrinkTextToFit(bar.pctTxt, pctFs, bar.pctTxt:GetWidth() - 4)
         bar.pctTxt:SetTextColor(0.6, 0.6, 0.6)
         bar.icon:SetAlpha(0.4)
         bar.tint:SetColorTexture(0.4, 0.4, 0.4)
         bar.tint:SetAlpha(showingOverrideIcon and 0 or cfg.iconTintOpacity)
     elseif data.dead then
         bar.pctTxt:SetText("Dead")
+        shrinkTextToFit(bar.pctTxt, pctFs, bar.pctTxt:GetWidth() - 4)
         bar.pctTxt:SetTextColor(0.9, 0.3, 0.3)
         bar.icon:SetAlpha(0.4)
         bar.tint:SetColorTexture(0.4, 0.4, 0.4)

@@ -10,6 +10,11 @@
   - Notes:
 
 ### Entries
+- PROMPT 76
+  - Intent: User reported "Offline" text gets cut off in Icon display style — the mana % font size (auto-scaled to cell size for short strings like "82%") is too large to fit the longer word "Offline"/"Dead" without wrapping/clipping. Bar style was explicitly excluded from this request.
+  - Files changed: UI.lua
+  - Result: Icon style's status block now resets bar.pctTxt to the normal effectivePctFontSize(cfg.pctFontSize) at the top of every render (previously only implicitly relied on whatever font was left over from a prior render, which is what let a shrunk "Dead"/"Offline" font silently persist into a later normal % readout too), then calls the existing shrinkTextToFit helper (already used for name text) specifically for the "Offline"/"Dead" branches to shrink the font down until it fits bar.pctTxt's actual width minus a small margin. Also added SetWordWrap(false) to bar.pctTxt at creation (icon style only), matching the existing nameTxt pattern, as a safety net against wrapping to a second line at extreme small cell sizes even after shrinking. Bar display style untouched per the request.
+  - Notes: Not yet verified in-game. Ran luacheck — 0 new warnings.
 - PROMPT 75
   - Intent: User reported Food & Drink detection works in raid (out of combat) but never in Mythic+ keys, and asked whether it's blocked there.
   - Files changed: Commands.lua, docs/ADDON_CONTEXT.md
