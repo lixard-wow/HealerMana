@@ -369,14 +369,14 @@ local function renderBar(bar, data)
 
     if not data.connected then
         bar.pctTxt:SetText("Offline")
-        shrinkTextToFit(bar.pctTxt, pctFs, bar.pctTxt:GetWidth() - 4)
+        pcall(shrinkTextToFit, bar.pctTxt, pctFs, cfg.cellSize - 4)
         bar.pctTxt:SetTextColor(0.6, 0.6, 0.6)
         bar.icon:SetAlpha(0.4)
         bar.tint:SetColorTexture(0.4, 0.4, 0.4)
         bar.tint:SetAlpha(showingOverrideIcon and 0 or cfg.iconTintOpacity)
     elseif data.dead then
         bar.pctTxt:SetText("Dead")
-        shrinkTextToFit(bar.pctTxt, pctFs, bar.pctTxt:GetWidth() - 4)
+        pcall(shrinkTextToFit, bar.pctTxt, pctFs, cfg.cellSize - 4)
         bar.pctTxt:SetTextColor(0.9, 0.3, 0.3)
         bar.icon:SetAlpha(0.4)
         bar.tint:SetColorTexture(0.4, 0.4, 0.4)

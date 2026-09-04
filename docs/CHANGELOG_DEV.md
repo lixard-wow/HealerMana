@@ -10,6 +10,11 @@
   - Notes:
 
 ### Entries
+- PROMPT 77
+  - Intent: Live Lua error right after PROMPT 76's Offline/Dead text-fit fix shipped — "attempt to perform arithmetic on a secret number value (execution tainted by 'HealerMana')" at UI.lua:372/379, both on `bar.pctTxt:GetWidth() - 4`.
+  - Files changed: UI.lua
+  - Result: Root cause: HM.refreshDisplay renders every healer's bar inside one continuous C_Timer.After callback/loop; since UnitPowerPercent is confirmed always-secret for grouped units (established earlier this session), any earlier healer in that same loop iteration that read a live mana value taints the REST of that callback's execution, per Blizzard's own execution-taint model — so a totally unrelated Frame:GetWidth() call on a LATER healer (an offline/dead one) in the same render pass can come back flagged secret too, and subtracting 4 from it throws. Fixed by computing the max width from cfg.cellSize (a plain SavedVariables number, never touched by secret game data) instead of querying the live frame via GetWidth(). Also wrapped both shrinkTextToFit calls in pcall as defense-in-depth, since its internal `fs:GetStringWidth() > maxW` comparison could theoretically hit the same taint (docs/ADDON_CONTEXT.md's own secret-value rule explicitly forbids comparison, not just arithmetic, on a value that may be secret) — a caught failure now just leaves the pre-shrink font size in place instead of crashing the render loop.
+  - Notes: Not yet re-verified in-game. Ran luacheck — 0 new warnings.
 - PROMPT 76
   - Intent: User reported "Offline" text gets cut off in Icon display style — the mana % font size (auto-scaled to cell size for short strings like "82%") is too large to fit the longer word "Offline"/"Dead" without wrapping/clipping. Bar style was explicitly excluded from this request.
   - Files changed: UI.lua
