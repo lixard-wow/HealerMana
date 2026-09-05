@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+- Fixed "Offline"/"Dead" text getting cut off in Icon display style, especially at larger icon sizes
+- Fixed a rare error that could occur right after the above fix when an Offline/Dead healer was displayed alongside other live healers
+- Help tab now explains the Mythic+ limitation on Food & Drink detection and documents the Druid Forms feature
+
 ## 1.0.4
 - Added a Druid shapeshift-form indicator: while a healer Druid is in Cat, Bear, or Moonkin Form, their icon shows the actual Feral/Guardian/Balance icon (Icon style) or a colored [Cat]/[Bear]/[Moonkin] tag next to their name (Bar style), making it clear at a glance they're not actively healing. Cat and Bear Form now update correctly even during combat; Moonkin Form only updates outside of combat
 - Mana % is now hidden while a Druid is in Cat or Bear Form, since neither uses mana as their active resource
