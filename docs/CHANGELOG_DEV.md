@@ -10,6 +10,11 @@
   - Notes:
 
 ### Entries
+- PROMPT 80
+  - Intent: User wanted one final, decisive test rather than continued theorizing — a debug command that dumps EVERY helpful aura on a healer (not just the specific Food/Drink/form spell IDs already checked) to rule out the possibility that our narrower checks are missing something.
+  - Files changed: Commands.lua
+  - Result: Added `/hm auradump`, testing both aura-enumeration APIs side by side: C_UnitAuras.GetUnitAuras(unit, "HELPFUL") (ok/kind/count, then each aura's name+spellId) and the newer slot-based C_UnitAuras.GetAuraSlots(unit, "HELPFUL") + GetAuraDataBySlot per slot. Verified the exact GetAuraSlots signature via research rather than guessing — it returns `continuationToken, ...slots` as varargs, not a table, so the pcall result has to be captured via `{pcall(...)}` and indexed manually (an early draft wrongly assumed a table return). Added a safeStr() helper that checks HM.isSecretValue before ever calling tostring on a value pulled from these APIs, since a secret token/slot/field would otherwise crash the same way the Offline/Dead text-fit bug did earlier this session — defense-in-depth given this command's whole purpose is poking at APIs we don't already have full confidence in.
+  - Notes: Not yet run in-game. Needs the user to fire `/hm auradump` on a real healer mid-key while they're visibly eating/drinking, to get the final, unambiguous answer on whether anything at all is visible during an active M+ run. Ran luacheck — 0 new warnings.
 - PROMPT 79
   - Intent: User decided to keep Food & Drink detection despite the confirmed M+ limitation (it degrades gracefully, unlike Innervate, and still works in raid/other content) — asked to document the limitation in-addon, leave Innervate alone, and do a final code-cleanliness pass (no comments) ahead of final testing.
   - Files changed: Config.lua
