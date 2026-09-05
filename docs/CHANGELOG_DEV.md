@@ -10,6 +10,11 @@
   - Notes:
 
 ### Entries
+- PROMPT 79
+  - Intent: User decided to keep Food & Drink detection despite the confirmed M+ limitation (it degrades gracefully, unlike Innervate, and still works in raid/other content) — asked to document the limitation in-addon, leave Innervate alone, and do a final code-cleanliness pass (no comments) ahead of final testing.
+  - Files changed: Config.lua
+  - Result: Updated the Help tab's "Eating & Drinking" section to note it doesn't update inside an active Mythic+ run (Blizzard restriction, not a bug) while still working in raids/dungeons outside keys/open world. Added a new "Druid Forms" Help section documenting the Cat/Bear/Moonkin icon behavior, the mana-hide-while-shapeshifted behavior, and that Cat/Bear are combat-safe while Moonkin is out-of-combat only. Did a full comment audit across Core.lua/UI.lua/Commands.lua/Config.lua/Minimap.lua/HealerMana.lua — zero real Lua comments found (every `--` match was inside a print string, e.g. decorative "----" separators or "-- [unit]" debug labels). Also verified the .toc's file list matches disk exactly.
+  - Notes: No Innervate changes made, per explicit request. Ran luacheck — 0 new warnings (69 total lines, same pre-existing WoW-API-noise count as before). Ready for final in-game testing.
 - PROMPT 78
   - Intent: User asked, having seen the Cat/Bear Form UnitPowerType workaround, whether an equivalent trick exists for Food & Drink detection in M+ (mana trend, sit/kneel state, or anything else observable while eating).
   - Files changed: docs/ADDON_CONTEXT.md
