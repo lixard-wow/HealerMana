@@ -10,6 +10,11 @@
   - Notes:
 
 ### Entries
+- PROMPT 81
+  - Intent: User asked for /hm auradump's output to also persist to SavedVariables (not just chat), since a long dungeon run generates enough chat spam that the output could scroll past before they can review it.
+  - Files changed: Commands.lua
+  - Result: printAuraDump now routes every line through a small record() helper that both prints to chat (unchanged behavior) and appends to a lines table; at the end, that table is appended to HealerManaDB.auraDumps (a list, so repeated runs don't overwrite each other) tagged with a date("%H:%M:%S") timestamp. Added a new /hm auradumpshow command (printLastAuraDump) that reprints the most recently saved dump's lines to chat on demand, and /hm auradump itself now tells you how many dumps are saved total. Since HealerManaDB is the addon's one canonical SavedVariables table, this reuses it directly rather than creating a new one.
+  - Notes: Not yet run in-game. Ran luacheck — 0 new warnings.
 - PROMPT 80
   - Intent: User wanted one final, decisive test rather than continued theorizing — a debug command that dumps EVERY helpful aura on a healer (not just the specific Food/Drink/form spell IDs already checked) to rule out the possibility that our narrower checks are missing something.
   - Files changed: Commands.lua

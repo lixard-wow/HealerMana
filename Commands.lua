@@ -33,7 +33,8 @@ local function printHelp()
     print("  |cffffff00/hm raid <n>|r - populate n fake healers to test layout (off to restore)")
     print("  |cffffff00/hm regendebug|r - TEMP: dump Food&Drink detection for tracked units")
     print("  |cffffff00/hm formdebug|r  - TEMP: dump Cat/Bear/Moonkin Form aura-secrecy detection for Druids")
-    print("  |cffffff00/hm auradump|r   - TEMP: dump EVERY helpful aura on tracked healers (GetUnitAuras + GetAuraSlots)")
+    print("  |cffffff00/hm auradump|r   - TEMP: dump EVERY helpful aura on tracked healers (GetUnitAuras + GetAuraSlots), also saved to HealerManaDB.auraDumps")
+    print("  |cffffff00/hm auradumpshow|r - TEMP: reprint the most recently saved /hm auradump")
     print("  |cffffff00/hm specmonitor|r - TEMP: watch live spec/icon detection for other healers every 2s (again to stop)")
     print("  |cffffff00/hm raidregen|r  - TEMP: preview the Food&Drink icon swap on fake healers")
     print("  |cffffff00/hm auralog|r    - TEMP: watch player's HELPFUL auras every 2s, saves new ones to HealerManaDB.auraLog (again to stop)")
@@ -164,24 +165,30 @@ local function safeStr(v)
 end
 
 local function printAuraDump()
-    print("|cff00ccffHealerMana|r: aura dump (TEMP command, remove after verifying) ---")
+    local lines = {}
+    local function record(line)
+        print(line)
+        lines[#lines + 1] = line
+    end
+
+    record("|cff00ccffHealerMana|r: aura dump (TEMP command, remove after verifying) ---")
     local function reportUnit(unit)
-        print(string.format("  [%s] %s  inCombat=%s  mythicPlusActive=%s",
+        record(string.format("  [%s] %s  inCombat=%s  mythicPlusActive=%s",
             unit, tostring(UnitName(unit)), tostring(InCombatLockdown()),
             tostring(C_ChallengeMode and C_ChallengeMode.IsChallengeModeActive and C_ChallengeMode.IsChallengeModeActive())))
 
         local ok, auras = pcall(C_UnitAuras.GetUnitAuras, unit, "HELPFUL")
         local secretTbl = ok and type(auras) == "table" and HM.isSecretTable and HM.isSecretTable(auras)
         local kind = (not ok and "err") or (auras == nil and "nil") or (secretTbl and "secretTable") or type(auras)
-        print("    GetUnitAuras(HELPFUL): ok=" .. tostring(ok) .. " kind=" .. kind)
+        record("    GetUnitAuras(HELPFUL): ok=" .. tostring(ok) .. " kind=" .. kind)
         if ok and type(auras) == "table" and not secretTbl then
             local countOk, count = pcall(function() return #auras end)
-            print("      count=" .. safeStr(countOk and count or "err"))
+            record("      count=" .. safeStr(countOk and count or "err"))
             if countOk then
                 for i, aura in ipairs(auras) do
                     local nameOk, name = pcall(function() return aura.name end)
                     local idOk, id = pcall(function() return aura.spellId end)
-                    print(string.format("      [%d] name=%s spellId=%s", i,
+                    record(string.format("      [%d] name=%s spellId=%s", i,
                         nameOk and safeStr(name) or "err", idOk and safeStr(id) or "err"))
                 end
             end
@@ -191,7 +198,7 @@ local function printAuraDump()
         local slotOk = slotResults[1]
         local token = slotResults[2]
         local slotCount = math.max(#slotResults - 2, 0)
-        print(string.format("    GetAuraSlots(HELPFUL): ok=%s token=%s slotCount=%s",
+        record(string.format("    GetAuraSlots(HELPFUL): ok=%s token=%s slotCount=%s",
             tostring(slotOk), safeStr(token), slotOk and safeStr(slotCount) or "err"))
         if slotOk then
             for i = 3, #slotResults do
@@ -201,12 +208,30 @@ local function printAuraDump()
                 local dataKind = (not dataOk and "err") or (data == nil and "nil") or (dataSecret and "secretTable") or type(data)
                 local nm = (dataKind == "table") and safeStr(data.name) or "n/a"
                 local sid = (dataKind == "table") and safeStr(data.spellId) or "n/a"
-                print(string.format("      slot[%d]=%s dataKind=%s name=%s spellId=%s", i - 2, safeStr(slot), dataKind, nm, sid))
+                record(string.format("      slot[%d]=%s dataKind=%s name=%s spellId=%s", i - 2, safeStr(slot), dataKind, nm, sid))
             end
         end
     end
     for unit in pairs(healerData) do reportUnit(unit) end
-    print("|cff00ccffHealerMana|r: --- end aura dump")
+    record("|cff00ccffHealerMana|r: --- end aura dump")
+
+    HealerManaDB.auraDumps = HealerManaDB.auraDumps or {}
+    table.insert(HealerManaDB.auraDumps, {savedAt = date("%H:%M:%S"), lines = lines})
+    print("|cff00ccffHealerMana|r: saved to HealerManaDB.auraDumps (" .. #HealerManaDB.auraDumps ..
+          " total) - /hm auradumpshow to reprint the latest")
+end
+
+local function printLastAuraDump()
+    local dumps = HealerManaDB.auraDumps
+    if not dumps or #dumps == 0 then
+        print("|cff00ccffHealerMana|r: no saved aura dumps yet - run /hm auradump first")
+        return
+    end
+    local last = dumps[#dumps]
+    print("|cff00ccffHealerMana|r: replaying aura dump #" .. #dumps .. " saved at " .. tostring(last.savedAt) .. " ---")
+    for _, line in ipairs(last.lines) do
+        print(line)
+    end
 end
 
 local function printFormDebug()
@@ -354,6 +379,9 @@ function HM.setupSlash()
 
         elseif cmd == "auradump" then
             printAuraDump()
+
+        elseif cmd == "auradumpshow" then
+            printLastAuraDump()
 
         elseif cmd == "specmonitor" then
             toggleSpecMonitor()
