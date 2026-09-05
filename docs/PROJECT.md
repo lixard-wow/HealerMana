@@ -1,4 +1,386 @@
-# CHANGELOG_DEV
+# PROJECT
+
+Consolidated internal working docs for HealerMana (previously separate files under docs/). CLAUDE.md and the root CHANGELOG.md remain separate — see CLAUDE.md for why.
+
+## Table of Contents
+- [Addon Context](#addon-context)
+- [Dev Rules](#dev-rules)
+- [TODO](#todo)
+- [Issues](#issues)
+- [Testing](#testing)
+- [Archive: Innervate Detection](#archive-innervate-detection)
+- [Changelog (Dev)](#changelog-dev)
+
+---
+
+## Addon Context
+
+
+## Addon Identity
+- Addon Name: HealerMana
+- Primary Purpose: Monitors healer mana for all healers in raids and dungeons. Icon-grid or bar display with mana %, range dimming, and class-colored borders.
+- Expansion Target: Midnight (Interface 120100)
+
+## Core Features
+- Icon grid or bar display (vertical, horizontal, or grid layout) — one cell per healer
+- Mana % display via UnitPowerPercent with full WoW 12.0 secret-value handling
+- Out-of-range dimming via C_Spell.IsSpellInRange / UnitInRange / SetAlphaFromBoolean
+- Class-colored borders and name labels per healer
+- Spec icon from GetInspectSpecialization / GetSpecializationInfo with class fallback; Priest (the only class with two Healer-role specs) shows a generic class-icon placeholder while resolving instead of blank or a guess
+- Druid shapeshift-form indicator — while a healer Druid is in Cat, Bear, or Moonkin Form, Icon style replaces their spec icon outright with the Feral/Guardian/Balance spell icon; Bar style prefixes their name with a colored `[Cat]`/`[Bear]`/`[Moonkin]` tag. Cat/Bear detected via UnitPowerType (confirmed reliable in AND out of combat with live data); Moonkin still detected via aura (works out of combat only, same limitation Innervate has — see the Archive: Innervate Detection section below). Mana % is hidden (blank) while in Cat or Bear Form, since neither uses Mana as their active resource; Moonkin still uses Mana so its % keeps showing
+- Configurable: cell size, spacing, layout, font sizes, sort order, lock, name/% symbol visibility
+- Minimap icon (LibDBIcon-1.0 + LibDataBroker-1.1) — left-click opens settings, right-click toggles a 5-healer test preview, tooltip explains the addon
+
+## Architecture Overview
+- Files (load order per .toc), sharing state via the standard `local ADDON_NAME, HM = ...` addon table:
+  - HealerMana.lua: bootstrap — DEFAULTS, shared HM state (cfg, healerData, barPool, eventFrame), ADDON_LOADED/event dispatch
+  - Core.lua: roster management (rebuildRoster, snapshotUnit, updateUnit), mana reading (readUnitPctRaw), range detection (isUnitInRange, detectRangeSpell), spec icons (buildSpecIcons, getSpecIcon), saveKey/resetPosition
+  - UI.lua: bar pool (createBar, getBar, positionBar, renderBar), display refresh (refreshDisplay), main frame (createMainFrame)
+  - Config.lua: widget helpers (makeToggle, makeSlider, makeDropdown, makeColorSwatch, makeTabButton, flatBtn), left-tab/right-content settings panel (createConfigFrame, openConfig) with 7 tabs (General, Layout, Fill Color, Background & Border, Text, Sort & Visibility, Help — the last is static reference text, no controls)
+  - Commands.lua: slash commands (setupSlash), debug dumps (printDebug, printHelp)
+  - Minimap.lua: LibDataBroker launcher object + LibDBIcon registration (initMinimapIcon, setMinimapIconShown); left-click opens settings, right-click toggles the test-roster preview directly (no menu)
+  - Libs/: embedded LibStub, LibDataBroker-1.1, LibDBIcon-1.0 (third-party, not linted/edited)
+- Notes:
+  - Keep responsibilities clearly separated
+  - Avoid cross-module leakage
+  - Cross-file mutable state (cfg, healerData, barPool, mainFrame, eventFrame, rangeCheckSpell, testModeActive, DEFAULTS) lives on the shared HM table; functions exposed to other files are assigned as `function HM.name(...)`
+  - Config.lua additionally exposes HM.addBorder, HM.flatBtn, HM.uiColors so Minimap.lua's quick menu matches the settings panel's visual style without duplicating widget code
+
+## Slash Commands
+- /hm (or /healermana) — open config panel
+- /hm lock    — toggle frame lock/unlock
+- /hm alpha   — toggle alphabetical sort
+- /hm class   — toggle sort by healer class
+- /hm layout  — toggle horizontal/vertical layout
+- /hm reset   — reset frame to default position
+- /hm raid <n> — populate n fake healers to test layout (off to restore)
+- /hm debug   — dump healer roster and mana readings
+- /hm range   — diagnose out-of-range detection
+
+Also reachable without typing: minimap icon left-click (settings) / right-click (quick layout menu — style, arrange, sort, lock, raid preview, reset, open settings).
+
+## SavedVariables
+- Name: HealerManaDB
+- Structure:
+  - sortMode ("alpha" or "class")
+  - locked (frame click-through)
+  - borderClassColor, showPctSymbol, showName, dimOutOfRange (display toggles)
+  - cellSize, cellSpacing (sizing)
+  - layoutHorizontal (layout)
+  - nameFontSize, pctFontSize (font sizes)
+  - point, relPoint, x, y (frame position)
+  - minimap = { hide, minimapPos, lock } — owned/written by LibDBIcon-1.0, not by saveKey
+
+## Known Constraints
+- No Blizzard templates
+- Event-driven preferred (0.5s ticker for mana refresh, unit events per healer)
+- Combat lockdown safe — no protected frame writes in tainted paths
+- No secret value misuse — UnitPower/UnitPowerPercent values are never compared or concatenated; routed through WrapString + SetFormattedText or SetAlphaFromBoolean
+- External libraries: LibStub, LibDataBroker-1.1, LibDBIcon-1.0 only (embedded in Libs/, explicitly approved for the minimap icon) — no others without explicit approval
+
+## Known Issues
+- Food & Drink icon-swap detection (and any other aura-based detection: Druid Moonkin Form) does not work anywhere inside an active Mythic+ run, even out of combat between pulls — confirmed via Blizzard's own documented aura-secrecy rule: aura/cooldown data is secret whenever "a mythic keystone run has started and not yet completed" is true, independent of actual combat state. A raid only trips this during an actual encounter/combat, so it works fine between raid pulls; a key trips it for the entire run. Live-confirmed twice: once via a Druid demonstrably in Bear Form returning a clean "not found" on the aura check during combat, once via the user's own Food & Drink test during an active key (via a since-removed TEMP debug command that printed `mythicPlusActive=` alongside `inCombat=`).
+  - **FINAL PROOF:** 6 real dumps captured (via a since-removed TEMP debug command that enumerated every aura on a unit) on a real healer (a Holy Paladin party member, "Doculorz" — not the user's own character) across an M+ session — both checks with `mythicPlusActive=false` succeeded fully (GetUnitAuras and GetAuraSlots agreed exactly, real aura lists including "Well Fed" once the healer was actually eating); all 4 checks with `mythicPlusActive=true` (one of them mid-combat) failed completely, this time with an explicit engine error instead of silent emptiness: `GetAuraSlots(): Auras cannot be accessed when secret while tainted by 'HealerMana' / Lua Taint: HealerMana`. This is no longer an inference from absence of data — it's Blizzard's own thrown error naming the exact cause, for exactly the scenario this addon actually needs (reading another healer's data). Nothing further to test here — the investigation is closed and its debug tooling has been removed.
+  - **CONFIRMED NO WORKAROUND EXISTS — do not re-research this.** Checked every angle: (1) "is mana increasing" — can't be computed at all, since comparing two secret mana readings requires arithmetic/comparison, both of which throw on secret values (see the Offline/Dead text-fit crash this session for a real example of exactly that failure). (2) Combat log (COMBAT_LOG_EVENT_UNFILTERED / CombatLogGetCurrentEventInfo) — removed from addon access entirely in this Midnight client, not merely secret; this is why DBM/BigWigs had to migrate to UNIT_* events instead. (3) UNIT_SPELLCAST_START/SUCCEEDED — gated by the identical restriction as auras, confirmed by the existence of Blizzard's own C_Secrets.ShouldUnitSpellCastBeSecret() API. (4) UnitStandState (sit/kneel detection) — does not exist as a real addon-callable Lua function; a search result claiming otherwise was a hallucination (conflating a real server-protocol concept with a nonexistent Lua wrapper) — verified absent from both Gethe/wow-ui-source and Ketho's official API annotations, despite a sanity-check confirming the same search method correctly finds real functions like UnitPowerType. (5) Blizzard's own CompactUnitFrame.lua (their real raid/party frame code) has zero references to Refreshment/Drink/Food/regen for other units — their own default UI doesn't attempt this either. (6) Blizzard's own generated API docs confirm `GetUnitAuraBySpellID` is flagged `SecretWhenUnitAuraRestricted = true, RequiresNonSecretAura = true` directly in their documentation metadata. (7) AuraContainer/AuraButton (new secure widget system, Patch 12.1) — a genuinely different, differently-named system from classic aura queries, exactly as the user suspected there might be. Investigated properly: it lets addons build custom secure buff-display widgets filtered by spell ID that work during combat/M+/encounters, but Blizzard explicitly engineered it to block even *indirect* detection as a deliberate design goal, not an oversight — confirmed via their own 12.1.0 API changes documentation: "addon code cannot install script handlers on Aura Buttons to be notified when they show or hide," "Aura Buttons return secret values for visibility checks, preventing indirect detection," and "it doesn't interact with the underlying aura data at all." There is no presence/visibility proxy signal to read back from this system either. The reason Cat/Bear Form had a workaround (UnitPowerType) and Food & Drink doesn't: UnitPowerType is metadata about which resource bar to display, categorically exempt from the secrecy system; there is no equivalent non-secret categorical signal for "is this unit eating."
+
+## Current Focus
+- Session initialization; no active task
+
+## Notes for AI
+- Do not guess APIs
+- Do not expand scope
+- Keep solutions minimal
+- Follow CLAUDE.md and DEV_RULES.md strictly
+- Secret value rules: NEVER do arithmetic, comparison, tostring, or string.format on values that may be secret (UnitPower, UnitPowerMax, UnitPowerPercent for grouped units in 12.0). Use issecretvalue() to detect, WrapString+SetFormattedText to display, SetAlphaFromBoolean for alpha.
+
+---
+
+## Dev Rules
+
+
+## Project Baseline
+- WoW addon project
+- Interface version: 120100
+- Lua only
+- No external libraries unless explicitly approved
+- Prefer custom UI over Blizzard templates/assets
+
+## Non-Negotiables
+- No guessing on WoW APIs
+- Verify uncertain API behavior before implementation
+- Never do math on secret/protected values
+- Never attempt to expose, infer, or bypass restricted values
+- Respect combat lockdown and secure frame limitations
+- Do not add hidden scope or unrelated cleanup
+
+## Scope Control
+- Do only what was requested
+- Keep changes minimal and targeted
+- Do not rewrite surrounding systems unless required for the task
+- If a broader refactor would help, propose it instead of silently doing it
+
+## Structure
+- Keep files responsibility-focused
+- Avoid duplicate helpers or duplicate implementations
+- Reuse existing module boundaries where possible
+- Prefer data-only extraction first
+- Split growing files before they become unmanageable
+- Do not create unnecessary conceptual layers
+
+## Performance
+- Event-driven first
+- Avoid unnecessary OnUpdate usage
+- Cache reused values
+- Avoid repeated allocations in hot paths
+- Gate disabled features so they stop doing work
+- Use dirty/queued refreshes when appropriate instead of constant rebuilding
+
+## SavedVariables
+- Use one canonical SavedVariables table
+- Keep defaults centralized
+- Do not scatter persistence logic across unrelated files
+
+## Localization
+- All player-facing strings should be localized
+- enUS is source of truth
+- Avoid string concatenation for localized UI text
+- Missing locale strings should be obvious during development
+
+## UI / Layout
+- Support different UI scales and resolutions
+- Avoid clipping and zero-width layout states
+- Avoid fragile offsets
+- Prefer measured or bounded sizing for dynamic content
+- Test layouts in narrow and wider frame states
+
+## File and Docs Workflow
+Project docs live in docs/PROJECT.md (a single consolidated file).
+
+Maintain these sections when the workflow is active:
+- TODO
+- Issues
+- Changelog (Dev)
+- Testing
+
+Definition of done includes:
+- requested code change completed
+- relevant docs updated
+- obvious regressions checked
+- completion marker printed in chat
+
+## Required Pre-Flight Check
+Before making changes, confirm:
+- scope is clear
+- solution is minimal
+- no duplicate helper is being introduced
+- localization rules are being followed
+- event-driven approach is preferred
+- debug/dev-only code stays isolated when applicable
+
+## Completion Marker
+When finishing a prompt or task, print:
+PROMPT X COMPLETE
+
+---
+
+## TODO
+
+
+## Active
+- [x] RESOLVED, final proof captured: `/hm auradump` live data (6 runs, saved to HealerManaDB.auraDumps) on a real healer party member (Holy Paladin, not the user) showed a clean 2-for-2 success outside M+ and 4-for-4 hard failure inside M+ (one of the four mid-combat), the failing runs throwing Blizzard's own explicit error `"Auras cannot be accessed when secret while tainted by 'HealerMana'"`. See the Addon Context section's Known Issues above for the full writeup. No further testing needed on this question.
+- [ ] CRITICAL, root cause not yet fixed: the CurseForge desktop app's auto-update silently did a full reinstall of HealerMana mid-session (PROMPT 71), wiping all uncommitted local changes plus `.git`/docs/CLAUDE.md back to the tagged 1.0.3 release. Recovered this time via GitHub clone + reconstruction from conversation history, but the underlying cause (CurseForge auto-managing this dev folder) is still active — **user needs to disable auto-update for HealerMana in the CurseForge app, or point CurseForge at a different install location than this dev folder**, or this will recur and next time may not be recoverable if nothing has been pushed to git recently. Commit and push promptly after any real session from now on.
+- [x] RESOLVED: Druid Cat/Bear Form detection switched from aura-based (confirmed broken in real combat — see git history) to UnitPowerType(unit)-based. Live combat test data showed UnitPowerType came back as a clean, non-secret value in every single test (MANA/ENERGY/RAGE), including the exact in-combat moment where the aura check failed — since Cat Form uniquely uses Energy and Bear Form uniquely uses Rage (no other Druid state uses either), this is a reliable signal that works in combat, confirmed by real data rather than guessed. HM.getDruidForm now checks UnitPowerType's power token first for CAT/BEAR; Moonkin Form still uses Mana (same as normal Resto/Balance) so it can't be distinguished this way and keeps the old aura-based check (works out of combat only, same limitation as before, lower priority since it wasn't the original ask). `UnitPowerPercent(unit, MANA)` was separately confirmed secret in every test regardless of form/combat state — not usable as a signal for anything.
+- [x] Removed Innervate detection from the live addon per user request (PROMPT 70) — confirmed working out of combat but user confirmed it fails once real combat starts, and the deciding live test (regendebug's secret=/inCombat= during actual combat) was never gathered. Full removed code + investigation notes (ElvUI/EllesmereUI source dive, the aura-secrecy research) archived in the Archive: Innervate Detection section below for a future session to resume from without re-researching. Food & Drink / Quiet Contemplation detection was NOT touched and remains live and confirmed working.
+- [x] Fixed (PROMPT 70, live user report): "Earthen Quiet Contemplation" not detected. Researched rather than guessed: confirmed via Wowhead this is a real, distinct Earthen-race racial ability (spellID 461063), added because Earthen characters can't eat/drink normal food/water ("Ingest Minerals" lore restriction) — not a Tea, not one of the 3 existing generic IDs. Has a real stable spellID, so added to HM.FOOD_DRINK_SPELL_IDS (HM.QUIET_CONTEMPLATION_SPELL_ID = 461063) rather than the name whitelist. Not yet verified live with an actual Earthen player.
+- [x] Fixed (PROMPT 70, live user report): a Disc Priest's bar showed a Druid's Bear Form icon. Root cause found by reading the actual render code (UI.lua) rather than guessing: HM.foodDrinkIcon was a single SHARED module-level variable — whichever unit's food/drink aura was detected most recently overwrote it, so every unit with regenState=="drinking" displayed that same last-written icon regardless of what THEY were actually drinking. Confirmed the Priest spec-icon fallback path (classSpecIcon["PRIEST"], intentionally nil since PROMPT 69) could only ever render blank, never another class's icon — ruling it out as a second cause. Fix: HM.getRegenState(unit) now returns (state, icon) as two values instead of writing to a shared global; snapshotUnit/HM.updateUnit store both regenState and a new per-unit regenIcon field on healerData[unit]; UI.lua reads data.regenIcon instead of the old shared HM.foodDrinkIcon. /hm raidregen's test2 preview (which force-sets regenState="drinking" on a fake unit with no real aura backing it) updated to also set a real regenIcon via C_Spell.GetSpellTexture(HM.DRINK_SPELL_ID) so the preview still renders correctly. Not yet re-verified live with two healers drinking different things simultaneously.
+- [x] Removed the TEMP `/hm regendebug`, `/hm formdebug`, `/hm auradump`/`/hm auradumpshow`, `/hm specmonitor`, `/hm raidregen`, and `/hm auralog` slash commands and their supporting functions (Commands.lua) now that the M+/aura-secrecy investigation is fully closed (see the Addon Context section above) — no further diagnostic instrumentation needed for this. `/hm debug` and `/hm range` (never TEMP, general-purpose tools) were kept.
+- [x] RESOLVED: the food/drink hybrid detection (spellID + tea-name fallback) is confirmed working correctly outside of Mythic+ (raid, dungeons outside keys, open world); confirmed via extensive live testing this session that it cannot work at all inside an active M+ run, for structural reasons (Blizzard's aura-secrecy restriction), not a detection-logic bug — see the Addon Context section's Known Issues above.
+- [x] RESOLVED by extension: the open question of whether Innervate detection (or any other unit's-aura detection) fails specifically during combat is now conclusively answered by this session's exhaustive M+/combat-secrecy research and live `/hm auradump` proof (an explicit Blizzard engine error: "Auras cannot be accessed when secret while tainted by 'HealerMana'") — this is a hard, general Blizzard restriction on all aura access for other units during combat/M+/encounters/PvP, not something specific to Innervate or fixable on our end. Innervate stays removed/archived (see the Archive: Innervate Detection section below) per user's prior explicit choice; no further live testing needed to confirm why.
+- [ ] Icon Tint Opacity slider past ~90 in `/hm raid <n>` test mode makes the fake healers fully vanish and they don't recover just by sliding back down (only a UI reload or `/hm raid off` then back on restores them). No visible Lua error, but user doesn't have Show Lua Errors / BugSack enabled, and errors inside C_Timer.After callbacks (where HM.refreshDisplay lives) are silent without one of those. Need `/console scriptErrors 1` (or BugSack) + a repro with the error text before this can be root-caused — no fix attempted yet, added during PROMPT 66 cleanup pass
+
+## Backlog
+- [ ] Click-to-battle-rez: clicking a dead healer's bar/icon casts the clicking player's own battle rez on them, regardless of the clicker's class (PROMPT 65, deferred at user's request — "save it for maybe later use"). Research already done, don't re-research:
+  - Current battle-rez classes/spells (verified, not guessed): Druid Rebirth (20484), Death Knight Raise Ally (61999), Paladin Intercession (391054). Warlock Soulstone excluded (pre-death only, can't target a corpse). Hunters have no current brez.
+  - Simple approach: convert bars to SecureActionButtonTemplate buttons with a static macro `/cast [@unit] Rebirth` + `/cast [@unit] Raise Ally` + `/cast [@unit] Intercession` as 3 lines — unknown spells silently no-op, so whichever the clicking player actually has just fires. No Lua class-detection needed.
+  - Confirmed safe under WoW's secret-value restrictions: combat-res spells are explicitly whitelisted from that system (12.0.1+).
+  - Real constraint (not fixable, not an addon bug): which real unit a secure button targets can only be set/changed OUTSIDE combat (protected attribute). So target assignment should refresh on each roster rebuild (already happens); a healer who joins brand-new mid-fight might not be click-ready until the next out-of-combat rebuild. Every click-cast raid addon (Clique, VuhDo, Cell) shares this limitation.
+  - Open design question not yet decided: plain click vs. Shift+Click (or other modifier) to avoid accidental casts — recommended Shift+Click, not yet confirmed with user.
+  - Known unconfirmed detail from research: whether there's a shared raid-wide brez charge pool currently limiting availability beyond the individual spell's own cooldown/charges — flagged as uncertain in the original research, would need in-game or BattleRezTracker-addon cross-check if pursued.
+
+## Completed
+- [ ] Move finished items here and mark with prompt number/date if desired
+
+---
+
+## Issues
+
+
+## Open
+- None logged yet
+
+## Fixed
+- [FIXED] Bar still shows "Dead" after a healer is resurrected
+  - Fixed in: PROMPT 7
+  - Notes: UNIT_FLAGS was registered globally (RegisterEvent) instead of per-unit (RegisterUnitEvent), so it only fired for the player's own unit. Party/raid healers, including follower-dungeon NPC healers, never had d.dead re-checked after a revive. Reported repro was a follower dungeon; root cause is unrelated to follower dungeons specifically — same bug would hit any non-player healer in a normal group.
+
+## Format
+- [OPEN] Short title
+  - Repro:
+  - Notes:
+  - Created by:
+
+- [FIXED] Short title
+  - Fixed in:
+  - Notes:
+
+---
+
+## Testing
+
+
+## Standard Smoke Test
+- Load the addon without Lua errors
+- Open the main UI/config if applicable
+- Reload UI and confirm settings persist
+- Check core feature path works
+- Check disabled features stop doing work
+- Check combat-sensitive features do not cause protected action issues
+- Check layout at different UI scales if UI was touched
+- Check localization keys for any new text
+
+## Task-Specific Tests
+- Add per-task testing notes here
+
+## Results
+- 2026-08-14 (static/code-review smoke test, no live client access): full luacheck pass (0 new warnings, only 2 pre-existing unrelated items), .toc-vs-disk file check (clean), cross-checked every `cfg.X` reference across all 6 files against DEFAULTS (no missing defaults), and manually traced every config control's callback across all 7 tabs and both display styles for nil-safety, forward-reference bugs, and API-signature mismatches. Found and fixed one real issue: UI.lua's icon-style renderBar still called `getFillColor(data, pct)` with a stale 2nd argument left over from the Mana Threshold removal (PROMPT 45) — harmless in Lua (extra args are silently dropped) but misleading; fixed to `getFillColor(data)`. No other bugs found. This is NOT a substitute for an in-game pass — could not click through the actual UI, trigger real events, or verify visual rendering.
+
+---
+
+## Archive: Innervate Detection
+
+
+## Status
+Removed from the live addon. Food & Drink / Quiet Contemplation regen detection (the sibling
+feature added the same session) is confirmed working and was NOT touched — this archive is
+Innervate-specific.
+
+## Why it was removed
+Innervate detection (spellID 29166) was confirmed working out of combat, including on another
+party member (not just the local player) — first verified this session via live `/hm regendebug`.
+But the user confirmed live that it does NOT work once actual combat starts, which is exactly
+when a healer's Innervate usually matters most.
+
+User pointed out ElvUI and EllesmereUI both show Innervate correctly on their frames, which would
+suggest it should be readable in combat too. Investigated both addons' real installed source
+(not guessed) before concluding anything:
+
+- **ElvUI**: its only Innervate reference is a config entry in
+  `G.unitframe.aurafilters.Whitelist` (`ElvUI/Game/Mainline/Filters/Filters.lua`) — a static
+  "always display this spell if seen" override for its *normal* aura-scanning pipeline. The
+  actual data-fetching underneath (`ElvUI_Libraries/Game/Shared/oUF/auraskip.lua`) uses the same
+  `C_UnitAuras.GetAuraSlots`/`GetAuraDataBySlot` APIs we use, and explicitly guards against secret
+  values AND secret tables (`oUF:IsSecretValue`, `oUF:IsSecretTable`). No special bypass found —
+  ElvUI is subject to the same restriction, not exempt from it.
+- **EllesmereUI**: its Innervate reference (`EllesmereUIUnitFrames_PlayerAuraBars.lua`) is the
+  **player's own** aura bar — watching buffs on yourself, not reading another unit's aura. Your
+  own auras are documented as exempt from secrecy, so this is a fundamentally easier case that
+  doesn't prove other-unit reads work in combat.
+
+Neither addon was ever confirmed by the user to show Innervate on ANOTHER player specifically
+DURING combat — that's the one fact that would have settled whether this is a genuine Blizzard
+wall or a fixable bug on our side, and it was never gathered before the decision to remove and
+archive rather than keep debugging.
+
+## The likely cause (documented, not fully confirmed for this specific spellID)
+Per Warcraft Wiki's Patch 12.1.0 API changes page (sourced from Blizzard's own generated API
+doc data): aura data becomes secret "during combat, encounters, M+, and PvP matches" for any
+addon, for any spell NOT on Blizzard's "never secret" exception list. Whether spellID 29166
+(Innervate) is on that list was never directly confirmed — the improved `/hm regendebug` (added
+this session, still in the live addon) prints `secret=` and `inCombat=` specifically so this can
+be tested live in the future: a `secret=true` result during real combat would confirm the wall;
+a normal `nil`/`secret=false` result would mean something else is actually broken.
+
+## How to resume this later
+1. Re-add the pieces below.
+2. Have the user run `/hm regendebug` (already has the `secret=`/`inCombat=` reporting) while
+   Innervate is actually up on someone AND the user is in real combat — that's the missing data
+   point.
+3. If confirmed secret/blocked in combat, this is very likely a hard Blizzard-side restriction
+   with no addon-side fix — treat as a permanent limitation rather than keep iterating.
+
+## Removed code (as of removal, PROMPT 70)
+
+### Core.lua
+```lua
+HM.INNERVATE_SPELL_ID  = 29166
+...
+HM.innervateIcon = C_Spell.GetSpellTexture(HM.INNERVATE_SPELL_ID)
+
+function HM.getRegenState(unit)
+    if not UnitExists(unit) then return nil end
+    if auraDataBySpellID(unit, HM.INNERVATE_SPELL_ID) then return "innervate" end
+    -- ...food/drink checks unchanged, kept...
+end
+```
+
+### UI.lua (bar-style name-text swap, inside `renderBar`)
+```lua
+local displayName = data.name
+if data.regenState == "innervate" then
+    displayName = "Innervate"
+elseif data.regenState == "drinking" then
+    displayName = "Drinking"
+end
+```
+(kept the `drinking` branch, removed only the `innervate` one — see current code)
+
+### UI.lua (icon-style icon swap, inside `renderBar`)
+```lua
+local iconID = data.specIcon
+local showingRegenIcon = false
+if data.regenState == "innervate" and HM.innervateIcon then
+    iconID = HM.innervateIcon
+    showingRegenIcon = true
+elseif data.regenState == "drinking" and data.regenIcon then
+    iconID = data.regenIcon
+    showingRegenIcon = true
+end
+```
+(kept the `drinking` branch, removed only the `innervate` one — see current code)
+
+### Commands.lua (`/hm regendebug`, inside `reportUnit`)
+```lua
+local ok1, innervate = pcall(C_UnitAuras.GetUnitAuraBySpellID, unit, HM.INNERVATE_SPELL_ID)
+...
+local innervateSecret = ok1 and type(innervate) == "table" and HM.isSecretTable and HM.isSecretTable(innervate)
+print(string.format("  [%s] %s  innervateOk=%s type=%s secret=%s  inCombat=%s",
+    unit, tostring(UnitName(unit)), tostring(ok1), tostring(type(innervate)), tostring(innervateSecret), tostring(InCombatLockdown())))
+```
+
+### Commands.lua (`/hm raidregen`)
+```lua
+if healerData["test1"] then healerData["test1"].regenState = "innervate" end
+```
+(test1's innervate preview removed; test2's drinking preview kept)
+
+### Commands.lua (printHelp)
+```
+/hm regendebug - TEMP: dump Innervate/Food&Drink detection for tracked units
+/hm raidregen  - TEMP: preview the Innervate/Food&Drink icon swap on fake healers
+```
+(reworded to drop "Innervate" from both lines)
+
+### Config.lua (Help tab)
+```lua
+{kind = "header", text = "Innervate / Eating & Drinking (Work in Progress)"},
+{kind = "body", text = "In Icon style, a healer's icon is meant to swap to the Innervate or Food & Drink icon while they're regenerating mana that way. This feature is still a work in progress and doesn't work correctly yet."},
+```
+(reworded to describe only Food & Drink, since that part now works)
+
+---
+
+## Changelog (Dev)
+
 
 ## Unreleased
 

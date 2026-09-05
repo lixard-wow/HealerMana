@@ -72,9 +72,9 @@ You are working on a World of Warcraft addon.
 
 ## Workflow Rules
 - Read this file before making changes
-- Also read docs/DEV_RULES.md before making changes
-- Follow docs/TODO.md as the work driver when present
-- Update docs/CHANGELOG_DEV.md, docs/ISSUES.md, and docs/TODO.md whenever a task is completed, if the project is using that workflow
+- Also read docs/PROJECT.md (Dev Rules section) before making changes
+- Follow docs/PROJECT.md's TODO section as the work driver when present
+- Update docs/PROJECT.md's Changelog (Dev), Issues, and TODO sections whenever a task is completed, if the project is using that workflow
 - If requirements are unclear, stop and ask instead of guessing
 - When asked for a prompt, provide a copyable prompt block
 - When asked to make code changes, keep scope narrow unless told to broaden it
