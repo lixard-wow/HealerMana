@@ -10,6 +10,11 @@
   - Notes:
 
 ### Entries
+- PROMPT 82
+  - Intent: User ran `/hm auradump` 6 times across a real M+ session; read the results directly from HealerManaDB (via the local SavedVariables file, after asking the user to /reload to flush it to disk).
+  - Files changed: docs/ADDON_CONTEXT.md, docs/TODO.md
+  - Result: Clean, decisive pattern across the 6 saved dumps: both checks with mythicPlusActive=false succeeded fully (GetUnitAuras and GetAuraSlots agreed exactly on real aura lists, including "Well Fed" once the user was actually eating); all four checks with mythicPlusActive=true (one mid-combat) failed completely — and for the first time, with an explicit engine error instead of silent absence: `GetAuraSlots(): Auras cannot be accessed when secret while tainted by 'HealerMana' / Lua Taint: HealerMana`. The failing checks were against the player's OWN character (self-data, normally exempt from secrecy) — confirming the taint mechanism overrides even that exemption once anything in the same execution tick has touched a secret value elsewhere, while an M+ run is active. This is the most direct evidence possible (an engine-thrown error naming the cause) rather than an inference from empty results, and fully corroborates every prior finding this session.
+  - Notes: This closes the Food & Drink / M+ investigation for good — logged as FINAL PROOF in docs/ADDON_CONTEXT.md. No code changed.
 - PROMPT 81
   - Intent: User asked for /hm auradump's output to also persist to SavedVariables (not just chat), since a long dungeon run generates enough chat spam that the output could scroll past before they can review it.
   - Files changed: Commands.lua
