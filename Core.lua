@@ -351,6 +351,12 @@ function HM.enqueueInspect(unit, priority)
     end
     if inspectTicker then return end
     inspectTicker = C_Timer.NewTicker(1.7, function()
+        if #inspectQueue == 0 then
+            inspectTicker:Cancel()
+            inspectTicker = nil
+            return
+        end
+        if InspectFrame and InspectFrame:IsShown() then return end
         local u = table.remove(inspectQueue, 1)
         if not u then return end
         inspectQueued[u] = nil

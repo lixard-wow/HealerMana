@@ -2,7 +2,7 @@
 ## Title: HealerMana
 ## Notes: Monitors healer mana in raids and dungeons. Type /hm for options.
 ## Author: Lixard
-## Version: 1.0.4
+## Version: 1.0.5
 ## X-Curse-Project-ID: 1647742
 ## SavedVariables: HealerManaDB
 
