@@ -7,5 +7,6 @@ ignore:
   - .vscode
   - .luacheckrc
   - .pkgmeta
+  - README.md
   - CURSEFORGE.md
   - docs
