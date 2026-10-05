@@ -1,0 +1,11 @@
+package-as: HealerMana
+manual-changelog:
+  filename: CHANGELOG.md
+  markup-type: markdown
+ignore:
+  - .github
+  - .vscode
+  - .luacheckrc
+  - .pkgmeta
+  - CURSEFORGE.md
+  - docs
