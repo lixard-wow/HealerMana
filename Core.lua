@@ -106,14 +106,14 @@ function HM.detectRangeSpell()
     local list = RANGE_SPELLS_BY_CLASS[class]
     if list then
         for _, id in ipairs(list) do
-            if IsPlayerSpell(id) then
+            if C_SpellBook.IsSpellKnown(id) then
                 HM.rangeCheckSpell = id
                 return
             end
         end
     end
     for _, id in ipairs(RACIAL_RANGE_SPELLS) do
-        if IsPlayerSpell(id) then
+        if C_SpellBook.IsSpellKnown(id) then
             HM.rangeCheckSpell = id
             return
         end
@@ -150,9 +150,9 @@ end
 
 local function resolveUnitRole(unit)
     if UnitIsUnit(unit, "player") then
-        local specIdx = GetSpecialization()
+        local specIdx = C_SpecializationInfo.GetSpecialization()
         if not specIdx then return nil end
-        local ok, _, _, _, _, specRole = pcall(GetSpecializationInfo, specIdx)
+        local ok, _, _, _, _, specRole = pcall(C_SpecializationInfo.GetSpecializationInfo, specIdx)
         return ok and specRole or nil
     end
 
@@ -161,7 +161,7 @@ local function resolveUnitRole(unit)
         return resolvedRoleByName[name]
     end
 
-    local ok, specID = pcall(GetInspectSpecialization, unit)
+    local ok, specID = pcall(C_SpecializationInfo.GetInspectSpecialization, unit)
     if ok and type(specID) == "number" and specID > 0 then
         local roleOk, specRole = pcall(GetSpecializationRoleByID, specID)
         if roleOk and specRole then
@@ -198,7 +198,7 @@ function HM.handleInspectReady(guid)
     local unit = findUnitByGUID(guid)
     if not unit or UnitIsUnit(unit, "player") then return end
 
-    local ok, specID = pcall(GetInspectSpecialization, unit)
+    local ok, specID = pcall(C_SpecializationInfo.GetInspectSpecialization, unit)
     if not (ok and type(specID) == "number" and specID > 0) then return end
 
     local roleOk, specRole = pcall(GetSpecializationRoleByID, specID)
@@ -268,13 +268,13 @@ end
 
 function HM.getSpecIcon(unit, classToken)
     if UnitIsUnit(unit, "player") then
-        local specIdx = GetSpecialization()
+        local specIdx = C_SpecializationInfo.GetSpecialization()
         if specIdx then
-            local ok, _, _, _, icon = pcall(GetSpecializationInfo, specIdx)
+            local ok, _, _, _, icon = pcall(C_SpecializationInfo.GetSpecializationInfo, specIdx)
             if ok and icon then return icon end
         end
     else
-        local ok, specID = pcall(GetInspectSpecialization, unit)
+        local ok, specID = pcall(C_SpecializationInfo.GetInspectSpecialization, unit)
         if ok and type(specID) == "number" and specID > 0 then
             local ok2, _, _, _, icon = pcall(GetSpecializationInfoByID, specID)
             if ok2 and icon then return icon end

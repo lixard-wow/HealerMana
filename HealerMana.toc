@@ -1,4 +1,4 @@
-## Interface: 120100, 120007
+## Interface: 120105, 120100, 120007
 ## Title: HealerMana
 ## Notes: Monitors healer mana in raids and dungeons. Type /hm for options.
 ## Author: Lixard
