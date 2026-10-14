@@ -46,7 +46,7 @@ Theme.THEMES = {
         },
     },
     classic = {
-        name = "Lixard Classic",
+        name = "Slate",
         fonts = { body = SOURCE, strong = SOURCE_BOLD, heading = SOURCE_BOLD, title = SOURCE_BOLD, button = SOURCE },
         titleSize = 15, headingSize = 13, windowRadius = 0, buttonRadius = 0,
         classAccent = true,
