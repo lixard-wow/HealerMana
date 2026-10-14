@@ -72,8 +72,6 @@ local CLASS_COLOR = {
     EVOKER  = {0.200, 0.580, 0.500},
 }
 
-local _wrapStr = HM.wrapStr
-
 local mainFrame
 local BORDER_OVERHANG = 8
 
@@ -230,9 +228,9 @@ local function setPctText(fs, pct)
     if HM.isPlainNumber(pct) then
         local p = math.floor(pct + 0.5)
         fs:SetText(cfg.showPctSymbol and (p .. "%") or tostring(p))
-    elseif pct ~= nil and _wrapStr then
+    elseif pct ~= nil then
         local formatted = cfg.showPctSymbol and format("%.0f%%", pct) or format("%.0f", pct)
-        fs:SetFormattedText("%s", _wrapStr(formatted, "", ""))
+        fs:SetFormattedText("%s", C_StringUtil.WrapString(formatted, "", ""))
     else
         fs:SetText("")
     end
@@ -241,7 +239,7 @@ end
 local function renderBar(bar, data)
     if cfg.dimOutOfRange and not UnitIsUnit(data.unit, "player") then
         local inRange = HM.isUnitInRange(data.unit)
-        if issecretvalue and issecretvalue(inRange) then
+        if issecretvalue(inRange) then
             bar:SetAlphaFromBoolean(inRange, 1, cfg.outOfRangeOpacity)
         elseif inRange == false then
             bar:SetAlpha(cfg.outOfRangeOpacity)

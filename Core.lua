@@ -5,30 +5,13 @@ local healerData = HM.healerData
 local eventFrame = HM.eventFrame
 local DEFAULTS   = HM.DEFAULTS
 
-HM.MANA          = 0
-HM.isSecretValue = issecretvalue
-HM.isSecretTable = issecrettable
-HM.wrapStr       = C_StringUtil and C_StringUtil.WrapString
-HM.scaleTo100    = CurveConstants and CurveConstants.ScaleTo100
+local MANA = Enum.PowerType.Mana
 
-local MANA        = HM.MANA
-local _isSecret    = HM.isSecretValue
-local _isSecretTable = HM.isSecretTable
-local _scaleTo100  = HM.scaleTo100
-
-HM.FOOD_SPELL_ID       = 45618
-HM.DRINK_SPELL_ID      = 43183
-HM.FOOD_DRINK_SPELL_ID = 192002
-HM.QUIET_CONTEMPLATION_SPELL_ID = 461063
-
-HM.FOOD_DRINK_SPELL_IDS = {HM.FOOD_SPELL_ID, HM.DRINK_SPELL_ID, HM.FOOD_DRINK_SPELL_ID, HM.QUIET_CONTEMPLATION_SPELL_ID}
-
-HM.FOOD_DRINK_NAMES = {"Refreshment", "Drink", "Mana Lily Tea", "Argentleaf Tea", "Tranq Bloom Tea"}
+local FOOD_DRINK_SPELL_IDS = {45618, 43183, 192002, 461063}
+local FOOD_DRINK_NAMES = {"Refreshment", "Drink", "Mana Lily Tea", "Argentleaf Tea", "Tranq Bloom Tea"}
 
 local function isUsableAuraTable(aura)
-    if type(aura) ~= "table" then return false end
-    if _isSecretTable and _isSecretTable(aura) then return false end
-    return true
+    return type(aura) == "table" and not issecrettable(aura)
 end
 
 local function auraDataBySpellID(unit, spellID)
@@ -45,13 +28,13 @@ end
 
 function HM.getRegenState(unit)
     if not UnitExists(unit) then return nil end
-    for _, spellID in ipairs(HM.FOOD_DRINK_SPELL_IDS) do
+    for _, spellID in ipairs(FOOD_DRINK_SPELL_IDS) do
         local aura = auraDataBySpellID(unit, spellID)
         if aura then
             return "drinking", type(aura.icon) == "number" and aura.icon or nil
         end
     end
-    for _, name in ipairs(HM.FOOD_DRINK_NAMES) do
+    for _, name in ipairs(FOOD_DRINK_NAMES) do
         local aura = auraDataByName(unit, name)
         if aura then
             return "drinking", type(aura.icon) == "number" and aura.icon or nil
@@ -60,17 +43,12 @@ function HM.getRegenState(unit)
     return nil
 end
 
-HM.CAT_FORM_SPELL_ID     = 768
-HM.BEAR_FORM_SPELL_ID    = 5487
-HM.MOONKIN_FORM_SPELL_ID = 24858
-HM.CAT_FORM_ICON      = C_Spell.GetSpellTexture(HM.CAT_FORM_SPELL_ID)
-HM.BEAR_FORM_ICON     = C_Spell.GetSpellTexture(HM.BEAR_FORM_SPELL_ID)
-HM.MOONKIN_FORM_ICON  = C_Spell.GetSpellTexture(HM.MOONKIN_FORM_SPELL_ID)
+local MOONKIN_FORM_SPELL_ID = 24858
 
 HM.FORM_ICON = {
-    CAT     = HM.CAT_FORM_ICON,
-    BEAR    = HM.BEAR_FORM_ICON,
-    MOONKIN = HM.MOONKIN_FORM_ICON,
+    CAT     = C_Spell.GetSpellTexture(768),
+    BEAR    = C_Spell.GetSpellTexture(5487),
+    MOONKIN = C_Spell.GetSpellTexture(MOONKIN_FORM_SPELL_ID),
 }
 
 function HM.getDruidForm(unit, classToken)
@@ -78,7 +56,7 @@ function HM.getDruidForm(unit, classToken)
     local _, powerToken = UnitPowerType(unit)
     if powerToken == "ENERGY" then return "CAT" end
     if powerToken == "RAGE" then return "BEAR" end
-    if auraDataBySpellID(unit, HM.MOONKIN_FORM_SPELL_ID) then return "MOONKIN" end
+    if auraDataBySpellID(unit, MOONKIN_FORM_SPELL_ID) then return "MOONKIN" end
     return nil
 end
 
@@ -127,7 +105,7 @@ function HM.isUnitInRange(unit)
         if r == false then return false end
     end
     local inRange, checked = UnitInRange(unit)
-    if issecretvalue and issecretvalue(checked) then
+    if issecretvalue(checked) then
         return inRange
     elseif checked then
         return inRange and true or false
@@ -139,7 +117,7 @@ local resolvedRoleByName = {}
 
 local function usableName(unit)
     local name = UnitName(unit)
-    if name and not (issecretvalue and issecretvalue(name)) then return name end
+    if name and not issecretvalue(name) then return name end
     return nil
 end
 
@@ -203,7 +181,7 @@ function HM.handleInspectReady(guid)
 
     local roleOk, specRole = pcall(GetSpecializationRoleByID, specID)
     if roleOk and specRole then
-        local name = UnitName(unit)
+        local name = usableName(unit)
         if name then resolvedRoleByName[name] = specRole end
     end
 
@@ -225,8 +203,7 @@ function HM.shouldShowForCurrentInstance()
 end
 
 function HM.getLSM()
-    local LibStub = _G.LibStub
-    return LibStub and LibStub:GetLibrary("LibSharedMedia-3.0", true)
+    return LibStub:GetLibrary("LibSharedMedia-3.0", true)
 end
 
 function HM.getFontPath()
@@ -250,7 +227,7 @@ local HEALER_SPEC_ID = {
 }
 
 local classSpecIcon = {}
-HM.GENERIC_CLASS_ICON_TEXTURE = "Interface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES"
+local GENERIC_CLASS_ICON_TEXTURE = "Interface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES"
 
 function HM.buildSpecIcons()
     wipe(classSpecIcon)
@@ -261,7 +238,7 @@ function HM.buildSpecIcons()
                 classSpecIcon[class] = icon
             end
         elseif CLASS_ICON_TCOORDS and CLASS_ICON_TCOORDS[class] then
-            classSpecIcon[class] = {texture = HM.GENERIC_CLASS_ICON_TEXTURE, coords = CLASS_ICON_TCOORDS[class]}
+            classSpecIcon[class] = {texture = GENERIC_CLASS_ICON_TEXTURE, coords = CLASS_ICON_TCOORDS[class]}
         end
     end
 end
@@ -447,17 +424,13 @@ function HM.retryUnresolvedIcons()
 end
 
 function HM.readUnitPctRaw(unit)
-    local ok, pct = pcall(UnitPowerPercent, unit, MANA, true, _scaleTo100)
+    local ok, pct = pcall(UnitPowerPercent, unit, MANA, true, CurveConstants.ScaleTo100)
     if ok then return pct end
-    local ok2, pct2 = pcall(UnitPowerPercent, unit, MANA)
-    if ok2 then return pct2 end
     return nil
 end
 
 function HM.isPlainNumber(v)
-    if type(v) ~= "number" then return false end
-    if _isSecret and _isSecret(v) then return false end
-    return true
+    return type(v) == "number" and not issecretvalue(v)
 end
 
 function HM.updateUnit(unit)

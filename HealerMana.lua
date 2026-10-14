@@ -82,7 +82,8 @@ HM.eventFrame:SetScript("OnEvent", function(self, event, ...)
         HM.cfg.nameFontSize, HM.cfg.pctFontSize = HM.autoFontSizes(HM.cfg.cellSize)
         HealerManaDB.nameFontSize, HealerManaDB.pctFontSize = HM.cfg.nameFontSize, HM.cfg.pctFontSize
 
-        HM.buildSpecIcons() HM.detectRangeSpell()
+        HM.buildSpecIcons()
+        HM.detectRangeSpell()
         HM.createMainFrame()
         HM.setupSlash()
         HM.initMinimapIcon()
@@ -104,7 +105,8 @@ HM.eventFrame:SetScript("OnEvent", function(self, event, ...)
 
     elseif event == "PLAYER_ENTERING_WORLD" then
         C_Timer.After(1.5, function()
-            HM.buildSpecIcons() HM.detectRangeSpell()
+            HM.buildSpecIcons()
+            HM.detectRangeSpell()
             HM.rebuildRoster()
             HM.refreshDisplay()
         end)

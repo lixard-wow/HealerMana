@@ -174,7 +174,7 @@ local function makeSlider(parent, labelText, minVal, maxVal, stepVal, onChange)
     function s:GetValue() return s._value end
 
     local function fromCursor()
-        local x = select(1, GetCursorPosition()) / hit:GetEffectiveScale()
+        local x = GetCursorPosition() / hit:GetEffectiveScale()
         local l, r = hit:GetLeft() or 0, hit:GetRight() or 1
         if r <= l then return minVal end
         return minVal + math.max(0, math.min(1, (x - l) / (r - l))) * (maxVal - minVal)
