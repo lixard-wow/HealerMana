@@ -2,28 +2,14 @@ local _, HM = ...
 
 local cfg     = HM.cfg
 local barPool = HM.barPool
+local Theme   = HM.Theme
 
-local BG      = {0.06, 0.06, 0.06, 0.98}
-local TITLE   = {0.08, 0.08, 0.08, 1.00}
-local BTN     = {0.12, 0.12, 0.12, 1.00}
-local BTN_HOV = {0.20, 0.20, 0.20, 1.00}
-local BORDER  = {0.22, 0.22, 0.22}
-local MUTED   = {0.70, 0.70, 0.70}
-local PRIMARY = {0.92, 0.91, 0.86}
-local ACCENT  = {0.20, 0.60, 1.00}
+local HEADER_H = 42
 
-local function addBorder(frame)
-    local function edge(a, b, horiz)
-        local t = frame:CreateTexture(nil, "BORDER")
-        t:SetPoint(a, frame, a)
-        t:SetPoint(b, frame, b)
-        if horiz then t:SetHeight(1) else t:SetWidth(1) end
-        t:SetColorTexture(BORDER[1], BORDER[2], BORDER[3], 1)
-    end
-    edge("TOPLEFT",    "TOPRIGHT",    true)
-    edge("BOTTOMLEFT", "BOTTOMRIGHT", true)
-    edge("TOPLEFT",    "BOTTOMLEFT",  false)
-    edge("TOPRIGHT",   "BOTTOMRIGHT", false)
+local function label(parent, text, size, colorKey)
+    local fs = Theme.Text(parent, "body", size or 12, colorKey or "muted")
+    fs:SetText(text or "")
+    return fs
 end
 
 local function maskCircle(owner, texture)
@@ -33,99 +19,55 @@ local function maskCircle(owner, texture)
     texture:AddMaskTexture(mask)
 end
 
-local function flatBtn(parent, text, w, h)
-    local btn = CreateFrame("Button", nil, parent)
-    btn:SetSize(w or 100, h or 24)
-    btn.bg = btn:CreateTexture(nil, "BACKGROUND")
-    btn.bg:SetAllPoints()
-    btn.bg:SetColorTexture(BTN[1], BTN[2], BTN[3], BTN[4])
-    addBorder(btn)
-    btn.lbl = btn:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    btn.lbl:SetPoint("CENTER")
-    btn.lbl:SetText(text or "")
-    btn.lbl:SetTextColor(MUTED[1], MUTED[2], MUTED[3])
-    btn:SetScript("OnEnter", function(self)
-        self.bg:SetColorTexture(BTN_HOV[1], BTN_HOV[2], BTN_HOV[3], BTN_HOV[4])
-        self.lbl:SetTextColor(PRIMARY[1], PRIMARY[2], PRIMARY[3])
-    end)
-    btn:SetScript("OnLeave", function(self)
-        self.bg:SetColorTexture(BTN[1], BTN[2], BTN[3], BTN[4])
-        self.lbl:SetTextColor(MUTED[1], MUTED[2], MUTED[3])
-    end)
-    return btn
-end
-
 local function makeToggle(parent, labelText, getVal, onToggle)
-    local BOX = 14
+    local BOX = 16
     local tog = CreateFrame("Button", nil, parent)
     tog:SetHeight(BOX)
-    tog:EnableMouse(true)
     tog:RegisterForClicks("LeftButtonUp")
 
-    local box = CreateFrame("Frame", nil, tog)
-    box:SetSize(BOX, BOX)
-    box:SetPoint("LEFT", tog, "LEFT", 0, 0)
-    box.bg = box:CreateTexture(nil, "BACKGROUND")
-    box.bg:SetAllPoints()
-    box.bg:SetColorTexture(0.08, 0.08, 0.08, 1)
-    addBorder(box)
+    local cb = Theme.Check(tog, BOX, function(self) onToggle(self:GetChecked()) end)
+    cb:SetPoint("LEFT", tog, "LEFT", 0, 0)
+    cb:SetChecked(getVal() == true)
 
-    local check = box:CreateTexture(nil, "ARTWORK")
-    check:SetPoint("TOPLEFT",     box, "TOPLEFT",     3, -3)
-    check:SetPoint("BOTTOMRIGHT", box, "BOTTOMRIGHT", -3,  3)
-    check:SetColorTexture(ACCENT[1], ACCENT[2], ACCENT[3], 0.9)
-    check:SetShown(getVal() == true)
+    local lbl = label(tog, labelText)
+    lbl:SetPoint("LEFT", cb, "RIGHT", 8, 0)
 
-    local lbl = tog:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    lbl:SetPoint("LEFT", box, "RIGHT", 6, 0)
-    lbl:SetText(labelText or "")
-    lbl:SetTextColor(MUTED[1], MUTED[2], MUTED[3])
-    tog:SetWidth(BOX + 6 + (lbl:GetStringWidth() or 100) + 8)
+    local function hover(on) Theme.SetColor(lbl, on and "text" or "muted") end
+    tog:SetScript("OnClick", function() cb:Click() end)
+    tog:SetScript("OnEnter", function() hover(true) end)
+    tog:SetScript("OnLeave", function() hover(false) end)
+    cb:HookScript("OnEnter", function() hover(true) end)
+    cb:HookScript("OnLeave", function() hover(false) end)
+    Theme.Skin(function() tog:SetWidth(BOX + 8 + lbl:GetStringWidth() + 8) end)
 
-    tog._checked = (getVal() == true)
-    function tog:SetChecked(v)
-        self._checked = (v == true)
-        check:SetShown(self._checked)
-    end
-    function tog:GetChecked() return self._checked end
-
-    tog:SetScript("OnClick", function(self)
-        self:SetChecked(not self:GetChecked())
-        onToggle(self:GetChecked())
-    end)
+    function tog:SetChecked(v) cb:SetChecked(v == true) end
+    function tog:GetChecked() return cb:GetChecked() end
     return tog
 end
 
 local function makeSlider(parent, labelText, minVal, maxVal, stepVal, onChange)
-    local TRACK_H = 3
+    local TRACK_H = 4
     local THUMB_SIZE = 14
     local THUMB_RADIUS = THUMB_SIZE / 2
     local s = CreateFrame("Frame", nil, parent)
     s:SetHeight(40)
 
-    s.lbl = s:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    s.lbl = label(s, labelText)
     s.lbl:SetPoint("TOPLEFT", s, "TOPLEFT", 0, 0)
-    s.lbl:SetText(labelText or "")
-    s.lbl:SetTextColor(MUTED[1], MUTED[2], MUTED[3])
 
-    s.valTxt = s:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    s.valTxt = Theme.Text(s, "strong", 12, "accent")
     s.valTxt:SetPoint("TOPRIGHT", s, "TOPRIGHT", 0, 0)
     s.valTxt:SetJustifyH("RIGHT")
-    s.valTxt:SetTextColor(ACCENT[1], ACCENT[2], ACCENT[3])
 
     local track = CreateFrame("Frame", nil, s)
-    track:SetPoint("TOPLEFT",  s, "TOPLEFT",  THUMB_RADIUS, -20)
-    track:SetPoint("TOPRIGHT", s, "TOPRIGHT", -THUMB_RADIUS, -20)
+    track:SetPoint("TOPLEFT",  s, "TOPLEFT",  THUMB_RADIUS, -22)
+    track:SetPoint("TOPRIGHT", s, "TOPRIGHT", -THUMB_RADIUS, -22)
     track:SetHeight(TRACK_H)
-    track.bg = track:CreateTexture(nil, "BACKGROUND")
-    track.bg:SetAllPoints()
-    track.bg:SetColorTexture(0.18, 0.18, 0.18, 1)
-    addBorder(track)
+    Theme.Box(track, "well", "border", "none")
 
     local fill = track:CreateTexture(nil, "ARTWORK")
     fill:SetPoint("LEFT", track, "LEFT", 0, 0)
     fill:SetHeight(TRACK_H)
-    fill:SetColorTexture(ACCENT[1], ACCENT[2], ACCENT[3], 0.7)
 
     local thumb = CreateFrame("Frame", nil, track)
     thumb:SetSize(THUMB_SIZE, THUMB_SIZE)
@@ -133,23 +75,25 @@ local function makeSlider(parent, labelText, minVal, maxVal, stepVal, onChange)
 
     local thumbRing = thumb:CreateTexture(nil, "BACKGROUND")
     thumbRing:SetAllPoints()
-    thumbRing:SetColorTexture(0, 0, 0, 0.6)
     maskCircle(thumb, thumbRing)
 
-    thumb.bg = thumb:CreateTexture(nil, "ARTWORK")
-    thumb.bg:SetPoint("TOPLEFT", 2, -2)
-    thumb.bg:SetPoint("BOTTOMRIGHT", -2, 2)
-    thumb.bg:SetColorTexture(ACCENT[1], ACCENT[2], ACCENT[3], 0.95)
-    maskCircle(thumb, thumb.bg)
+    local thumbDot = thumb:CreateTexture(nil, "ARTWORK")
+    thumbDot:SetPoint("TOPLEFT", 2, -2)
+    thumbDot:SetPoint("BOTTOMRIGHT", -2, 2)
+    maskCircle(thumb, thumbDot)
+
+    Theme.Skin(function(_, C)
+        fill:SetColorTexture(C.accent[1], C.accent[2], C.accent[3], 0.8)
+        thumbRing:SetColorTexture(C.window[1], C.window[2], C.window[3], 1)
+        thumbDot:SetColorTexture(C.accent[1], C.accent[2], C.accent[3], 1)
+    end)
 
     local hit = CreateFrame("Button", nil, track)
     hit:SetPoint("TOPLEFT",     track, "TOPLEFT",     -4,  8)
     hit:SetPoint("BOTTOMRIGHT", track, "BOTTOMRIGHT",  4, -8)
-    hit:EnableMouse(true)
     hit:RegisterForClicks("LeftButtonDown", "LeftButtonUp")
 
-    s._min = minVal;  s._max = maxVal
-    s._step = stepVal;  s._value = minVal
+    s._value = minVal
 
     local function snap(v)
         if stepVal and stepVal > 0 then
@@ -169,7 +113,8 @@ local function makeSlider(parent, labelText, minVal, maxVal, stepVal, onChange)
     end
     function s:SetValue(v)
         v = snap(math.max(minVal, math.min(maxVal, tonumber(v) or minVal)))
-        s._value = v; redraw()
+        s._value = v
+        redraw()
     end
     function s:GetValue() return s._value end
 
@@ -179,20 +124,18 @@ local function makeSlider(parent, labelText, minVal, maxVal, stepVal, onChange)
         if r <= l then return minVal end
         return minVal + math.max(0, math.min(1, (x - l) / (r - l))) * (maxVal - minVal)
     end
-    local dragging = false
     hit:SetScript("OnMouseDown", function()
-        dragging = true
-        s:SetValue(snap(fromCursor())); onChange(s._value)
+        s:SetValue(fromCursor())
+        onChange(s._value)
         s:SetScript("OnUpdate", function()
-            if dragging then
-                local v = snap(fromCursor())
-                if v ~= s._value then s:SetValue(v); onChange(s._value) end
+            local v = snap(fromCursor())
+            if v ~= s._value then
+                s:SetValue(v)
+                onChange(s._value)
             end
         end)
     end)
-    hit:SetScript("OnMouseUp", function()
-        dragging = false; s:SetScript("OnUpdate", nil)
-    end)
+    hit:SetScript("OnMouseUp", function() s:SetScript("OnUpdate", nil) end)
     track:HookScript("OnSizeChanged", redraw)
     s:SetValue(minVal)
     return s
@@ -202,17 +145,16 @@ local function makeStepper(parent, getVal, onChange, minVal, maxVal)
     local s = CreateFrame("Frame", nil, parent)
     s:SetSize(96, 24)
 
-    local minusBtn = flatBtn(s, "-", 24, 24)
+    local minusBtn = Theme.TextButton(s, "-", 24, 24)
     minusBtn:SetPoint("LEFT", s, "LEFT", 0, 0)
 
-    local plusBtn = flatBtn(s, "+", 24, 24)
+    local plusBtn = Theme.TextButton(s, "+", 24, 24)
     plusBtn:SetPoint("RIGHT", s, "RIGHT", 0, 0)
 
-    local valTxt = s:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    valTxt:SetPoint("TOPLEFT",     minusBtn, "TOPRIGHT",    0, 0)
-    valTxt:SetPoint("BOTTOMRIGHT", plusBtn,  "BOTTOMLEFT",  0, 0)
+    local valTxt = Theme.Text(s, "strong", 12, "text")
+    valTxt:SetPoint("TOPLEFT",     minusBtn, "TOPRIGHT",   0, 0)
+    valTxt:SetPoint("BOTTOMRIGHT", plusBtn,  "BOTTOMLEFT", 0, 0)
     valTxt:SetJustifyH("CENTER")
-    valTxt:SetTextColor(PRIMARY[1], PRIMARY[2], PRIMARY[3])
 
     function s:Refresh()
         valTxt:SetText(tostring(getVal()))
@@ -235,35 +177,25 @@ local function makeDropdown(parent, labelText, options, getVal, onSelect)
     local d = CreateFrame("Frame", nil, parent)
     d:SetHeight(40)
 
-    d.lbl = d:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    d.lbl = label(d, labelText)
     d.lbl:SetPoint("TOPLEFT", d, "TOPLEFT", 0, 0)
-    d.lbl:SetText(labelText or "")
-    d.lbl:SetTextColor(MUTED[1], MUTED[2], MUTED[3])
 
     local btn = CreateFrame("Button", nil, d)
     btn:SetPoint("BOTTOMLEFT",  d, "BOTTOMLEFT",  0, 0)
     btn:SetPoint("BOTTOMRIGHT", d, "BOTTOMRIGHT", 0, 0)
     btn:SetHeight(24)
-    btn.bg = btn:CreateTexture(nil, "BACKGROUND")
-    btn.bg:SetAllPoints()
-    btn.bg:SetColorTexture(0.08, 0.08, 0.08, 1)
-    addBorder(btn)
-    btn.valTxt = btn:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    btn.valTxt:SetPoint("LEFT", btn, "LEFT", 6, 0)
-    btn.valTxt:SetTextColor(PRIMARY[1], PRIMARY[2], PRIMARY[3])
-    local arrow = btn:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    arrow:SetPoint("RIGHT", btn, "RIGHT", -6, 0)
+    local _, btnEdge = Theme.Box(btn, "field", "border", "buttonRadius")
+    local valTxt = Theme.Text(btn, "body", 12, "text")
+    valTxt:SetPoint("LEFT", btn, "LEFT", 8, 0)
+    local arrow = Theme.Text(btn, "strong", 12, "muted")
+    arrow:SetPoint("RIGHT", btn, "RIGHT", -8, 0)
     arrow:SetText("v")
-    arrow:SetTextColor(MUTED[1], MUTED[2], MUTED[3])
 
     local ROW_H = 22
     local menu = CreateFrame("Frame", nil, UIParent)
     menu:SetFrameStrata("TOOLTIP")
     menu:Hide()
-    menu.bg = menu:CreateTexture(nil, "BACKGROUND")
-    menu.bg:SetAllPoints()
-    menu.bg:SetColorTexture(0.08, 0.08, 0.08, 1)
-    addBorder(menu)
+    Theme.Box(menu, "field", "border", "buttonRadius")
     menu:SetPoint("TOPLEFT",  btn, "BOTTOMLEFT",  0, -2)
     menu:SetPoint("TOPRIGHT", btn, "BOTTOMRIGHT", 0, -2)
     menu:SetHeight(#options * ROW_H + 8)
@@ -272,15 +204,35 @@ local function makeDropdown(parent, labelText, options, getVal, onSelect)
     overlay:SetAllPoints(UIParent)
     overlay:SetFrameStrata("TOOLTIP")
     overlay:Hide()
-    overlay:SetScript("OnClick", function() menu:Hide(); overlay:Hide() end)
+
+    local function close()
+        menu:Hide()
+        overlay:Hide()
+        Theme.Tint(btnEdge, Theme.C.border)
+    end
+    overlay:SetScript("OnClick", close)
 
     for i, opt in ipairs(options) do
-        local row = flatBtn(menu, opt.label, 100, ROW_H)
+        local row = CreateFrame("Button", nil, menu)
         row:SetFrameStrata("TOOLTIP")
+        row:SetHeight(ROW_H)
         row:SetPoint("TOPLEFT",  menu, "TOPLEFT",  4, -4 - (i - 1) * ROW_H)
         row:SetPoint("TOPRIGHT", menu, "TOPRIGHT", -4, -4 - (i - 1) * ROW_H)
+        local rowFill = Theme.Box(row, "hover", "hover", "buttonRadius")
+        row.edge:Hide()
+        rowFill:Hide()
+        local rowLbl = label(row, opt.label)
+        rowLbl:SetPoint("LEFT", row, "LEFT", 6, 0)
+        row:SetScript("OnEnter", function()
+            rowFill:Show()
+            Theme.SetColor(rowLbl, "text")
+        end)
+        row:SetScript("OnLeave", function()
+            rowFill:Hide()
+            Theme.SetColor(rowLbl, "muted")
+        end)
         row:SetScript("OnClick", function()
-            menu:Hide(); overlay:Hide()
+            close()
             d:SetValue(opt.value)
             onSelect(opt.value)
         end)
@@ -288,15 +240,22 @@ local function makeDropdown(parent, labelText, options, getVal, onSelect)
 
     btn:SetScript("OnClick", function()
         if menu:IsShown() then
-            menu:Hide(); overlay:Hide()
+            close()
         else
-            menu:Show(); overlay:Show()
+            menu:Show()
+            overlay:Show()
+            Theme.Tint(btnEdge, Theme.C.accent)
         end
     end)
+    btn:SetScript("OnEnter", function() Theme.SetColor(arrow, "text") end)
+    btn:SetScript("OnLeave", function() Theme.SetColor(arrow, "muted") end)
 
     function d:SetValue(v)
         for _, opt in ipairs(options) do
-            if opt.value == v then btn.valTxt:SetText(opt.label); break end
+            if opt.value == v then
+                valTxt:SetText(opt.label)
+                break
+            end
         end
     end
     d:SetValue(getVal())
@@ -308,21 +267,18 @@ local function makeColorSwatch(parent, labelText, getColor, onChange, hasAlpha)
     local row = CreateFrame("Frame", nil, parent)
     row:SetHeight(SWATCH)
 
-    row.lbl = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    row.lbl = label(row, labelText)
     row.lbl:SetPoint("LEFT", row, "LEFT", 0, 0)
-    row.lbl:SetText(labelText or "")
-    row.lbl:SetTextColor(MUTED[1], MUTED[2], MUTED[3])
 
     local swatch = CreateFrame("Button", nil, row)
     swatch:SetSize(SWATCH, SWATCH)
     swatch:SetPoint("RIGHT", row, "RIGHT", 0, 0)
-    swatch.bg = swatch:CreateTexture(nil, "BACKGROUND")
-    swatch.bg:SetAllPoints()
-    swatch.bg:SetColorTexture(0.08, 0.08, 0.08, 1)
+    local _, swatchEdge = Theme.Box(swatch, "field", "border", "buttonRadius")
     swatch.tex = swatch:CreateTexture(nil, "ARTWORK")
-    swatch.tex:SetPoint("TOPLEFT", 2, -2)
-    swatch.tex:SetPoint("BOTTOMRIGHT", -2, 2)
-    addBorder(swatch)
+    swatch.tex:SetPoint("TOPLEFT", 3, -3)
+    swatch.tex:SetPoint("BOTTOMRIGHT", -3, 3)
+    swatch:SetScript("OnEnter", function() Theme.Tint(swatchEdge, Theme.C.accent) end)
+    swatch:SetScript("OnLeave", function() Theme.Tint(swatchEdge, Theme.C.border) end)
 
     local function refresh()
         local c = getColor()
@@ -363,127 +319,58 @@ local function makeTabButton(parent, labelText)
     local btn = CreateFrame("Button", nil, parent)
     btn:SetHeight(28)
 
-    btn.bg = btn:CreateTexture(nil, "BACKGROUND")
-    btn.bg:SetAllPoints()
-    btn.bg:SetColorTexture(0, 0, 0, 0)
+    local fill = Theme.Box(btn, "hover", "hover", "buttonRadius")
+    btn.edge:Hide()
 
-    btn.accent = btn:CreateTexture(nil, "ARTWORK")
-    btn.accent:SetPoint("TOPLEFT", btn, "TOPLEFT", 0, 0)
-    btn.accent:SetPoint("BOTTOMLEFT", btn, "BOTTOMLEFT", 0, 0)
-    btn.accent:SetWidth(2)
-    btn.accent:SetColorTexture(ACCENT[1], ACCENT[2], ACCENT[3], 1)
-    btn.accent:Hide()
+    local accent = btn:CreateTexture(nil, "ARTWORK")
+    accent:SetPoint("TOPLEFT", btn, "TOPLEFT", 0, -4)
+    accent:SetPoint("BOTTOMLEFT", btn, "BOTTOMLEFT", 0, 4)
+    accent:SetWidth(3)
 
-    btn.lbl = btn:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    btn.lbl:SetPoint("LEFT",  btn, "LEFT",  10, 0)
+    btn.lbl = Theme.Text(btn, "strong", 12, "muted")
+    btn.lbl:SetPoint("LEFT",  btn, "LEFT",  12, 0)
     btn.lbl:SetPoint("RIGHT", btn, "RIGHT", -6, 0)
-    btn.lbl:SetJustifyH("LEFT")
-    btn.lbl:SetWordWrap(false)
     btn.lbl:SetText(labelText or "")
-    btn.lbl:SetTextColor(MUTED[1], MUTED[2], MUTED[3])
 
-    btn._active = false
+    local function paint()
+        local lit = btn._active or btn:IsMouseOver()
+        fill:SetShown(btn._active)
+        accent:SetShown(btn._active)
+        accent:SetColorTexture(Theme.C.accent[1], Theme.C.accent[2], Theme.C.accent[3], 1)
+        Theme.SetColor(btn.lbl, lit and "text" or "muted")
+    end
     function btn:SetActive(active)
         self._active = active and true or false
-        if self._active then
-            self.bg:SetColorTexture(BTN_HOV[1], BTN_HOV[2], BTN_HOV[3], BTN_HOV[4])
-            self.accent:Show()
-            self.lbl:SetTextColor(PRIMARY[1], PRIMARY[2], PRIMARY[3])
-        else
-            self.bg:SetColorTexture(0, 0, 0, 0)
-            self.accent:Hide()
-            self.lbl:SetTextColor(MUTED[1], MUTED[2], MUTED[3])
-        end
+        paint()
     end
-    btn:SetScript("OnEnter", function(self)
-        if not self._active then self.lbl:SetTextColor(PRIMARY[1], PRIMARY[2], PRIMARY[3]) end
-    end)
-    btn:SetScript("OnLeave", function(self)
-        if not self._active then self.lbl:SetTextColor(MUTED[1], MUTED[2], MUTED[3]) end
-    end)
+    btn:SetScript("OnEnter", paint)
+    btn:SetScript("OnLeave", paint)
+    Theme.Skin(paint)
     return btn
 end
 
 local configFrame
 
 local function createConfigFrame()
-    local f = CreateFrame("Frame", "HealerManaConfig", UIParent)
+    local f = Theme.Frame("HealerManaConfig", "HIGH", HEADER_H, "Interface\\AddOns\\HealerMana\\HealerMana_32x32.tga", "HealerMana")
     f:SetSize(480, 560)
     f:SetPoint("CENTER")
-    f:SetFrameStrata("HIGH")
-    f:SetMovable(true)
-    f:SetClampedToScreen(true)
-    f:EnableMouse(true)
 
-    f.bg = f:CreateTexture(nil, "BACKGROUND")
-    f.bg:SetAllPoints()
-    f.bg:SetColorTexture(BG[1], BG[2], BG[3], BG[4])
-    addBorder(f)
-
-    local titleBar = CreateFrame("Frame", nil, f)
-    titleBar:SetPoint("TOPLEFT",  f, "TOPLEFT",  0, 0)
-    titleBar:SetPoint("TOPRIGHT", f, "TOPRIGHT", 0, 0)
-    titleBar:SetHeight(32)
-    titleBar:EnableMouse(true)
-    titleBar:RegisterForDrag("LeftButton")
-    titleBar:SetScript("OnDragStart", function() f:StartMoving() end)
-    titleBar:SetScript("OnDragStop",  function() f:StopMovingOrSizing() end)
-    titleBar.bg = titleBar:CreateTexture(nil, "BACKGROUND")
-    titleBar.bg:SetAllPoints()
-    titleBar.bg:SetColorTexture(TITLE[1], TITLE[2], TITLE[3], TITLE[4])
-    local barDiv = titleBar:CreateTexture(nil, "BORDER")
-    barDiv:SetPoint("BOTTOMLEFT",  titleBar, "BOTTOMLEFT",  0, 0)
-    barDiv:SetPoint("BOTTOMRIGHT", titleBar, "BOTTOMRIGHT", 0, 0)
-    barDiv:SetHeight(1)
-    barDiv:SetColorTexture(BORDER[1], BORDER[2], BORDER[3], 1)
-
-    local titleLbl = titleBar:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-    titleLbl:SetPoint("LEFT", titleBar, "LEFT", 12, 0)
-    titleLbl:SetText("Healer|cff3399FFMana|r")
-    titleLbl:SetTextColor(PRIMARY[1], PRIMARY[2], PRIMARY[3])
-
-    local xBtn = CreateFrame("Button", nil, titleBar, "BackdropTemplate")
-    xBtn:SetSize(24, 24)
-    xBtn:SetPoint("RIGHT", titleBar, "RIGHT", -8, 0)
-    xBtn:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8",
-                       edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1 })
-    xBtn:SetBackdropColor(0.15, 0.15, 0.15, 1)
-    xBtn:SetBackdropBorderColor(BORDER[1], BORDER[2], BORDER[3], 1)
-    xBtn.x = xBtn:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-    xBtn.x:SetPoint("CENTER", 0, 0)
-    xBtn.x:SetFont(STANDARD_TEXT_FONT, 18, "")
-    xBtn.x:SetText("×")
-    xBtn.x:SetTextColor(0.8, 0.8, 0.8)
-    xBtn:SetScript("OnEnter", function(self)
-        self:SetBackdropColor(0.5, 0.1, 0.1, 1)
-        self:SetBackdropBorderColor(0.8, 0.2, 0.2, 1)
-        self.x:SetTextColor(1, 1, 1)
-    end)
-    xBtn:SetScript("OnLeave", function(self)
-        self:SetBackdropColor(0.15, 0.15, 0.15, 1)
-        self:SetBackdropBorderColor(BORDER[1], BORDER[2], BORDER[3], 1)
-        self.x:SetTextColor(0.8, 0.8, 0.8)
-    end)
-    xBtn:SetScript("OnClick", function() f:Hide() end)
-
+    local FOOTER_H = 44
     local footer = CreateFrame("Frame", nil, f)
     footer:SetPoint("BOTTOMLEFT",  f, "BOTTOMLEFT",  0, 0)
     footer:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", 0, 0)
-    footer:SetHeight(44)
-    footer.bg = footer:CreateTexture(nil, "BACKGROUND")
-    footer.bg:SetAllPoints()
-    footer.bg:SetColorTexture(TITLE[1], TITLE[2], TITLE[3], TITLE[4])
-    local footDiv = footer:CreateTexture(nil, "BORDER")
-    footDiv:SetPoint("TOPLEFT",  footer, "TOPLEFT",  0, 0)
-    footDiv:SetPoint("TOPRIGHT", footer, "TOPRIGHT", 0, 0)
+    footer:SetHeight(FOOTER_H)
+    local footDiv = Theme.Line(footer)
+    footDiv:SetPoint("TOPLEFT",  footer, "TOPLEFT",  1, 0)
+    footDiv:SetPoint("TOPRIGHT", footer, "TOPRIGHT", -1, 0)
     footDiv:SetHeight(1)
-    footDiv:SetColorTexture(BORDER[1], BORDER[2], BORDER[3], 1)
 
-    local resetBtn = flatBtn(footer, "Reset Position", 120, 24)
+    local resetBtn = Theme.TextButton(footer, "Reset Position", 120, 24)
     resetBtn:SetPoint("LEFT", footer, "LEFT", 12, 0)
     resetBtn:SetScript("OnClick", HM.resetPosition)
 
-    local closeFootBtn = flatBtn(footer, "Close", 80, 24)
+    local closeFootBtn = Theme.TextButton(footer, "Close", 80, 24)
     closeFootBtn:SetPoint("RIGHT", footer, "RIGHT", -12, 0)
     closeFootBtn:SetScript("OnClick", function() f:Hide() end)
 
@@ -491,7 +378,7 @@ local function createConfigFrame()
     previewGroup:SetSize(234, 24)
     previewGroup:SetPoint("LEFT", resetBtn, "RIGHT", 10, 0)
 
-    local previewBtn = flatBtn(previewGroup, "Start Preview", 130, 24)
+    local previewBtn = Theme.TextButton(previewGroup, "Start Preview", 130, 24)
     previewBtn:SetPoint("LEFT", previewGroup, "LEFT", 0, 0)
 
     local previewStepper = makeStepper(previewGroup,
@@ -517,7 +404,7 @@ local function createConfigFrame()
     end)
 
     local body = CreateFrame("Frame", nil, f)
-    body:SetPoint("TOPLEFT",     titleBar, "BOTTOMLEFT", 0, 0)
+    body:SetPoint("TOPLEFT",     f,        "TOPLEFT",    0, -HEADER_H)
     body:SetPoint("BOTTOMRIGHT", footer,   "TOPRIGHT",   0, 0)
 
     local TAB_RAIL_W = 150
@@ -527,11 +414,10 @@ local function createConfigFrame()
     tabRail:SetPoint("BOTTOMLEFT", body, "BOTTOMLEFT", 12,  12)
     tabRail:SetWidth(TAB_RAIL_W)
 
-    local railDiv = tabRail:CreateTexture(nil, "BORDER")
+    local railDiv = Theme.Line(tabRail)
     railDiv:SetPoint("TOP",    tabRail, "TOPRIGHT",    6, 0)
     railDiv:SetPoint("BOTTOM", tabRail, "BOTTOMRIGHT", 6, 0)
     railDiv:SetWidth(1)
-    railDiv:SetColorTexture(BORDER[1], BORDER[2], BORDER[3], 1)
 
     local scroll = CreateFrame("ScrollFrame", nil, body)
     scroll:SetPoint("TOPLEFT",     tabRail, "TOPRIGHT",    12,  0)
@@ -626,6 +512,14 @@ local function createConfigFrame()
             updateBgBorderTabLabel()
         end)
 
+    local themeOptions = {}
+    for _, key in ipairs(Theme.ORDER) do
+        themeOptions[#themeOptions + 1] = {value = key, label = Theme.THEMES[key].name}
+    end
+    local themeDropdown = makeDropdown(generalPane, "Theme", themeOptions,
+        function() return Theme.key end, Theme.Set)
+    Theme.Skin(function() themeDropdown:SetValue(Theme.key) end)
+
     local cbDimRange = makeToggle(generalPane, "Dim when out of range",
         function() return cfg.dimOutOfRange end,
         function(v)
@@ -655,6 +549,7 @@ local function createConfigFrame()
 
     paneRefresh.general = function()
         local rows = {
+            {w = themeDropdown,        h = DROPDOWN_H, group = "dropdown"},
             {w = displayStyleDropdown, h = DROPDOWN_H, group = "dropdown"},
             {w = cbDimRange,           h = TOGGLE_H, stretch = false, group = "toggle"},
             {w = cbHideSelf,           h = TOGGLE_H, stretch = false, group = "toggle"},
@@ -1043,12 +938,14 @@ local function createConfigFrame()
     local helpPane = newPane("help")
 
     local HELP_SECTIONS = {
-        {kind = "title", text = "Healer|cff3399FFMana|r"},
+        {kind = "title", text = "HealerMana"},
         {kind = "body", text = "Tracks the mana of every healer in your group or raid, shown as a row of bars or a strip of icons, positioned and styled however you like."},
         {kind = "header", text = "Eating & Drinking"},
         {kind = "body", text = "In Icon style, a healer's icon swaps to their Food & Drink icon while they're regenerating mana that way. This does not update anywhere inside an active Mythic+ run (a Blizzard restriction on that content, not a bug) - it still works normally in raids, dungeons outside of keys, and the open world."},
         {kind = "header", text = "Druid Forms"},
         {kind = "body", text = "A healer Druid's icon shows their Feral/Guardian/Balance icon while in Cat, Bear, or Moonkin Form (Bar style shows a colored [Cat]/[Bear]/[Moonkin] tag instead), and mana % is hidden while in Cat or Bear Form since neither uses mana. Cat and Bear Form update correctly even in combat; Moonkin Form only updates outside of combat (a Blizzard restriction)."},
+        {kind = "header", text = "Theme"},
+        {kind = "body", text = "Click the gear in the title bar to switch between Workbench, Artisan Ledger and Lixard Classic, or pick one under General."},
         {kind = "header", text = "Minimap Icon"},
         {kind = "body", text = "Click the minimap icon to open this settings panel."},
         {kind = "header", text = "Test Preview"},
@@ -1073,18 +970,16 @@ local function createConfigFrame()
 
     local helpWidgets = {}
     for _, section in ipairs(HELP_SECTIONS) do
-        local fs = helpPane:CreateFontString(nil, "OVERLAY",
-            section.kind == "title" and "GameFontNormalLarge" or "GameFontHighlightSmall")
-        fs:SetJustifyH("LEFT")
+        local fs
+        if section.kind == "title" then
+            fs = Theme.Text(helpPane, "heading", 16, "title")
+        elseif section.kind == "header" then
+            fs = Theme.Text(helpPane, "heading", nil, "accent")
+        else
+            fs = Theme.Text(helpPane, "body", 12, "text")
+        end
         fs:SetJustifyV("TOP")
         fs:SetWordWrap(true)
-        if section.kind == "title" then
-            fs:SetTextColor(PRIMARY[1], PRIMARY[2], PRIMARY[3])
-        elseif section.kind == "header" then
-            fs:SetTextColor(ACCENT[1], ACCENT[2], ACCENT[3])
-        else
-            fs:SetTextColor(PRIMARY[1], PRIMARY[2], PRIMARY[3])
-        end
         fs:SetText(section.text)
         helpWidgets[#helpWidgets + 1] = {fs = fs, kind = section.kind}
     end
@@ -1134,6 +1029,10 @@ local function createConfigFrame()
         tabButtons.bgBorder.lbl:SetText(cfg.displayStyle == "bar" and "Background" or "Border")
     end
     updateBgBorderTabLabel()
+
+    Theme.Skin(function()
+        if activeTab then paneRefresh[activeTab]() end
+    end)
 
     f:SetScript("OnShow", function()
         displayStyleDropdown:SetValue(cfg.displayStyle)

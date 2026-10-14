@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+- New look for the settings window, with three themes to choose from: Workbench, Artisan Ledger and Lixard Classic. Click the gear in the title bar to switch, or pick one under General
+- Press Escape to close the settings window
+
 ## 1.0.5
 - Fixed: HealerMana's background spec-detection could block you from manually inspecting other players' character panels — its inspect requests now pause while you have someone's Inspect window open, and stop entirely once there's nothing left to resolve instead of running forever
 

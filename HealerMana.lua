@@ -82,6 +82,7 @@ HM.eventFrame:SetScript("OnEvent", function(self, event, ...)
         HM.cfg.nameFontSize, HM.cfg.pctFontSize = HM.autoFontSizes(HM.cfg.cellSize)
         HealerManaDB.nameFontSize, HealerManaDB.pctFontSize = HM.cfg.nameFontSize, HM.cfg.pctFontSize
 
+        HM.Theme.Load()
         HM.buildSpecIcons()
         HM.detectRangeSpell()
         HM.createMainFrame()
