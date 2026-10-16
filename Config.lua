@@ -945,7 +945,7 @@ local function createConfigFrame()
         {kind = "header", text = "Druid Forms"},
         {kind = "body", text = "A healer Druid's icon shows their Feral/Guardian/Balance icon while in Cat, Bear, or Moonkin Form (Bar style shows a colored [Cat]/[Bear]/[Moonkin] tag instead), and mana % is hidden while in Cat or Bear Form since neither uses mana. Cat and Bear Form update correctly even in combat; Moonkin Form only updates outside of combat (a Blizzard restriction)."},
         {kind = "header", text = "Theme"},
-        {kind = "body", text = "Click the gear in the title bar to switch between Workbench, Artisan Ledger and Slate, or pick one under General."},
+        {kind = "body", text = "Click the gear in the title bar to switch between Workbench, Artisan Ledger, Horde, Alliance and Slate, or pick one under General."},
         {kind = "header", text = "Minimap Icon"},
         {kind = "body", text = "Click the minimap icon to open this settings panel."},
         {kind = "header", text = "Test Preview"},

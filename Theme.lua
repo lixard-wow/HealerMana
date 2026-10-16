@@ -16,7 +16,7 @@ local CINZEL = FONTS .. "Cinzel-Bold.ttf"
 local SOURCE = FONTS .. "SourceSans3-Regular.ttf"
 local SOURCE_BOLD = FONTS .. "SourceSans3-Bold.ttf"
 
-Theme.ORDER = { "workbench", "ledger", "classic" }
+Theme.ORDER = { "workbench", "ledger", "horde", "alliance", "classic" }
 
 Theme.THEMES = {
     workbench = {
@@ -43,6 +43,32 @@ Theme.THEMES = {
             accent = Hex("#c9a35a"), text = Hex("#efe6d6"), muted = Hex("#bfb19e"), title = Hex("#e9d9b4"), heading = Hex("#f3e6c8"),
             button = Hex("#241c15"), buttonBorder = Hex("#5a4630"), buttonHover = Hex("#2e241b"), buttonText = Hex("#e9d9b4"),
             icon = Hex("#a8998a"), iconHover = Hex("#e9d9b4"),
+        },
+    },
+    horde = {
+        name = "Horde",
+        fonts = { body = SOURCE, strong = SOURCE_BOLD, heading = CINZEL, title = CINZEL, button = SOURCE_BOLD },
+        titleSize = 14, headingSize = 12, windowRadius = 4, buttonRadius = 4,
+        innerFrame = true,
+        colors = {
+            window = Hex("#1a0f0c"), header = Hex("#1a0f0c"), field = Hex("#100806"), well = Hex("#100806"),
+            hover = Hex("#2c1813"), border = Hex("#6a2e24"), line = Hex("#3d1f19"),
+            accent = Hex("#d5462f"), text = Hex("#f1e4dc"), muted = Hex("#c2a69a"), title = Hex("#e8c9a0"), heading = Hex("#f5ddd0"),
+            button = Hex("#24140f"), buttonBorder = Hex("#6a2e24"), buttonHover = Hex("#2c1813"), buttonText = Hex("#f0d6c4"),
+            icon = Hex("#ab8f84"), iconHover = Hex("#e8c9a0"),
+        },
+    },
+    alliance = {
+        name = "Alliance",
+        fonts = { body = SOURCE, strong = SOURCE_BOLD, heading = CINZEL, title = CINZEL, button = SOURCE_BOLD },
+        titleSize = 14, headingSize = 12, windowRadius = 4, buttonRadius = 4,
+        innerFrame = true,
+        colors = {
+            window = Hex("#0f1522"), header = Hex("#0f1522"), field = Hex("#090e18"), well = Hex("#090e18"),
+            hover = Hex("#1a2539"), border = Hex("#36507e"), line = Hex("#1f2c45"),
+            accent = Hex("#d8b45a"), text = Hex("#e8edf6"), muted = Hex("#a6b3c9"), title = Hex("#e6cf8f"), heading = Hex("#eef2f9"),
+            button = Hex("#141d2e"), buttonBorder = Hex("#36507e"), buttonHover = Hex("#1a2539"), buttonText = Hex("#dbe4f3"),
+            icon = Hex("#8f9db5"), iconHover = Hex("#e6cf8f"),
         },
     },
     classic = {

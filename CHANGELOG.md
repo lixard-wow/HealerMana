@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- Two new settings window themes, Horde and Alliance, built on Artisan Ledger
 - New look for the settings window, with three themes to choose from: Workbench, Artisan Ledger and Lixard Classic. Click the gear in the title bar to switch, or pick one under General
 - Press Escape to close the settings window
 
