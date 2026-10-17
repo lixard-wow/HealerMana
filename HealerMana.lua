@@ -102,7 +102,6 @@ HM.eventFrame:SetScript("OnEvent", function(self, event, ...)
                 HM.retryUnresolvedIcons()
             end
         end)
-        print("|cff00ccffHealerMana|r loaded.  Type |cffffff00/hm|r for options.")
 
     elseif event == "PLAYER_ENTERING_WORLD" then
         C_Timer.After(1.5, function()
